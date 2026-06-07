@@ -222,7 +222,7 @@ aishort/
 ### Environment Variables
 File `environment.txt`:
 ```txt
-GEMINI_API_KEY=AIzaSyBEA1WbPZ05zKYO_60dlb3H2DLA2mLBW_o
+GEMINI_API_KEY=GEMINI_API_KEY_ANDA
 ```
 
 ### Auto-Caption Settings (Opsional)
