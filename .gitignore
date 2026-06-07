@@ -1,0 +1,14 @@
+.idea/
+.vscode/
+clips_out/
+venv/
+videos_podcast/
+__pycache__/
+*.mp4
+client_secrets.json
+environment.txt
+client_secrets.json
+token.pickle
+temp_req.txt
+environment.txt
+temp_req.txt

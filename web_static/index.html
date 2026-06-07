@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NurClipper — AI Shorts Automation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===== TOAST CONTAINER ===== -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- ===== CONFIRM DIALOG ===== -->
+<div id="confirmDialog" class="modal-overlay hidden">
+    <div class="confirm-box">
+        <div class="confirm-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <h3 id="confirmTitle">Konfirmasi</h3>
+        <p id="confirmMessage">Apakah Anda yakin?</p>
+        <div class="confirm-actions">
+            <button class="btn btn-secondary" id="confirmCancel">Batal</button>
+            <button class="btn btn-danger" id="confirmOk">Ya, Lanjutkan</button>
+        </div>
+    </div>
+</div>
+
+<div class="app-shell">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-logo"><i class="fa-solid fa-scissors"></i></div>
+            <div class="brand-text">
+                <span class="brand-name">NurClipper</span>
+                <span class="brand-sub">AI Shorts Automation</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active" data-page="dashboard">
+                <i class="fa-solid fa-gauge-high"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="#" class="nav-item" data-page="queue">
+                <i class="fa-solid fa-list-check"></i>
+                <span>Antrean Video</span>
+                <span class="nav-badge" id="navBadgeQueue">0</span>
+            </a>
+            <a href="#" class="nav-item" data-page="schedule">
+                <i class="fa-solid fa-calendar-days"></i>
+                <span>Jadwal Upload</span>
+                <span class="nav-badge nav-badge-accent" id="navBadgeSchedule">0</span>
+            </a>
+            <a href="#" class="nav-item" data-page="settings">
+                <i class="fa-solid fa-sliders"></i>
+                <span>Pengaturan</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <button class="btn-yt-auth" id="btnYoutubeAuth">
+                <i class="fa-brands fa-youtube"></i>
+                <span id="youtubeAuthText">Hubungkan YouTube</span>
+                <span class="auth-dot" id="authDot"></span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <div class="main-content">
+
+        <!-- TOP BAR -->
+        <header class="topbar">
+            <div class="topbar-left">
+                <button class="btn-sidebar-toggle" id="btnSidebarToggle">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+                <div class="page-title" id="pageTitle">
+                    <i class="fa-solid fa-gauge-high"></i>
+                    <span>Dashboard</span>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <button class="btn btn-danger-ghost btn-sm" id="btnCleanup">
+                    <i class="fa-solid fa-trash-can"></i>
+                    <span>Bersihkan Sesi</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- ===== PAGE: DASHBOARD ===== -->
+        <div class="page active" id="page-dashboard">
+
+            <!-- STATS ROW -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon si-blue"><i class="fa-solid fa-film"></i></div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="statTotal">0</div>
+                        <div class="stat-label">Total Video</div>
+                    </div>
+                    <div class="stat-trend" id="statTrendTotal"></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon si-orange"><i class="fa-solid fa-rotate fa-spin"></i></div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="statProcessing">0</div>
+                        <div class="stat-label">Sedang Diproses</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon si-green"><i class="fa-solid fa-circle-check"></i></div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="statCompleted">0</div>
+                        <div class="stat-label">Berhasil Upload</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon si-red"><i class="fa-solid fa-circle-exclamation"></i></div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="statFailed">0</div>
+                        <div class="stat-label">Gagal / Error</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon si-purple"><i class="fa-solid fa-calendar-check"></i></div>
+                    <div class="stat-body">
+                        <div class="stat-value" id="statScheduled">0</div>
+                        <div class="stat-label">Terjadwal</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DASHBOARD MAIN GRID -->
+            <div class="dashboard-grid">
+
+                <!-- LEFT: ADD + QUEUE -->
+                <div class="dash-left">
+
+                    <!-- ADD VIDEO CARD -->
+                    <div class="card">
+                        <div class="card-head">
+                            <h2><i class="fa-solid fa-circle-plus"></i> Tambah Link YouTube</h2>
+                            <span class="badge-hint">Bulk input didukung</span>
+                        </div>
+                        <form id="addVideoForm">
+                            <textarea id="ytUrls" rows="3"
+                                placeholder="Tempel link YouTube di sini...&#10;https://www.youtube.com/watch?v=...&#10;https://youtu.be/...&#10;(Satu link per baris untuk bulk input)"></textarea>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary btn-full">
+                                    <i class="fa-solid fa-cloud-arrow-down"></i> Masukkan ke Antrean
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- VIDEO QUEUE CARD -->
+                    <div class="card card-flex">
+                        <div class="card-head">
+                            <h2><i class="fa-solid fa-list-check"></i> Antrean Video</h2>
+                            <div class="head-controls">
+                                <span class="sync-indicator hidden" id="syncIndicator">
+                                    <i class="fa-solid fa-arrows-rotate fa-spin"></i>
+                                </span>
+                                <input type="text" class="search-input" id="searchQueue" placeholder="Cari video...">
+                            </div>
+                        </div>
+                        <div class="queue-body" id="queueBody">
+                            <div class="empty-state" id="emptyQueue">
+                                <i class="fa-solid fa-film"></i>
+                                <p>Belum ada video dalam antrean</p>
+                                <span>Tambahkan link YouTube di atas untuk memulai</span>
+                            </div>
+                            <div id="videoList"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT: DETAIL PANEL -->
+                <div class="dash-right">
+                    <div class="card card-flex detail-card" id="detailCard">
+
+                        <!-- EMPTY STATE -->
+                        <div class="detail-empty" id="detailEmpty">
+                            <i class="fa-solid fa-hand-pointer"></i>
+                            <p>Pilih video dari antrean</p>
+                            <span>Klik baris video untuk mengelola momen, menjalankan pipeline, dan memutar pratinjau klip</span>
+                        </div>
+
+                        <!-- DETAIL CONTENT -->
+                        <div id="detailContent" class="hidden">
+
+                            <!-- VIDEO INFO HEADER -->
+                            <div class="detail-header">
+                                <div class="detail-thumb-wrap">
+                                    <img id="detailThumb" src="" alt="thumb">
+                                    <a id="detailLink" href="#" target="_blank" class="thumb-link">
+                                        <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                                    </a>
+                                </div>
+                                <div class="detail-meta">
+                                    <span class="detail-channel" id="detailChannel">Channel</span>
+                                    <h3 id="detailTitle">Judul Video</h3>
+                                    <div class="detail-badges">
+                                        <span class="dbadge" id="dbadgeAnalisa">🔍 Analisa</span>
+                                        <span class="dbadge" id="dbadgeDownload">📥 Download</span>
+                                        <span class="dbadge" id="dbadgePotong">✂️ Potong</span>
+                                        <span class="dbadge" id="dbadgeUpload">📤 Upload</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- PIPELINE STEPPER -->
+                            <div class="pipeline-section">
+                                <div class="pipeline-header">
+                                    <h4><i class="fa-solid fa-circle-nodes"></i> Pipeline Automasi</h4>
+                                    <button class="btn btn-accent btn-sm" id="btnRunAll">
+                                        <i class="fa-solid fa-bolt"></i> All-in-One
+                                    </button>
+                                </div>
+                                <div class="pipeline-stepper">
+                                    <div class="ps-step" id="psAnalisa">
+                                        <div class="ps-icon"><i class="fa-solid fa-magnifying-glass"></i></div>
+                                        <div class="ps-label">Analisa</div>
+                                        <button class="ps-btn" id="btnAnalisa" title="Jalankan Analisa Gemini">
+                                            <i class="fa-solid fa-play"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ps-line" id="psLine1"></div>
+                                    <div class="ps-step" id="psDownload">
+                                        <div class="ps-icon"><i class="fa-solid fa-download"></i></div>
+                                        <div class="ps-label">Download</div>
+                                        <button class="ps-btn" id="btnDownload" title="Download Video Master">
+                                            <i class="fa-solid fa-play"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ps-line" id="psLine2"></div>
+                                    <div class="ps-step" id="psPotong">
+                                        <div class="ps-icon"><i class="fa-solid fa-scissors"></i></div>
+                                        <div class="ps-label">Potong</div>
+                                        <button class="ps-btn" id="btnPotong" title="Potong Momen Terpilih">
+                                            <i class="fa-solid fa-play"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ps-line" id="psLine3"></div>
+                                    <div class="ps-step" id="psUpload">
+                                        <div class="ps-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                                        <div class="ps-label">Upload</div>
+                                        <button class="ps-btn" id="btnUpload" title="Upload ke YouTube">
+                                            <i class="fa-solid fa-play"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- VIDEO PREVIEW PLAYER -->
+                            <div class="preview-player hidden" id="previewPlayer">
+                                <div class="preview-bar">
+                                    <span><i class="fa-solid fa-circle-play"></i> Pratinjau Shorts</span>
+                                    <button class="btn-icon-sm" id="btnClosePreview">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                </div>
+                                <div class="preview-video-wrap">
+                                    <video id="videoEl" controls playsinline>
+                                        <source id="videoSrc" src="" type="video/mp4">
+                                    </video>
+                                </div>
+                                <div class="preview-caption" id="previewCaption">—</div>
+                            </div>
+
+                            <!-- MOMENTS SECTION -->
+                            <div class="moments-section">
+                                <div class="moments-head">
+                                    <h4><i class="fa-solid fa-wand-magic-sparkles"></i> Momen Terbaik</h4>
+                                    <span class="moments-count" id="momentsCount">0 momen</span>
+                                </div>
+                                <div class="moments-toolbar">
+                                    <label class="chk-label">
+                                        <input type="checkbox" id="selectAll" checked>
+                                        <span class="chk-box"></span>
+                                        Pilih Semua
+                                    </label>
+                                    <div class="search-wrap">
+                                        <i class="fa-solid fa-magnifying-glass"></i>
+                                        <input type="text" id="searchMoment" placeholder="Cari momen...">
+                                    </div>
+                                </div>
+                                <div class="moments-list" id="momentsList">
+                                    <div class="empty-state">
+                                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                        <p>Belum ada momen</p>
+                                        <span>Jalankan Analisa Gemini terlebih dahulu</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== PAGE: QUEUE (full page) ===== -->
+        <div class="page hidden" id="page-queue">
+            <div class="card">
+                <div class="card-head">
+                    <h2><i class="fa-solid fa-list-check"></i> Semua Antrean Video</h2>
+                    <input type="text" class="search-input" id="searchQueueFull" placeholder="Cari video...">
+                </div>
+                <div id="videoListFull"></div>
+            </div>
+        </div>
+
+        <!-- ===== PAGE: SCHEDULE ===== -->
+        <div class="page hidden" id="page-schedule">
+            <div class="schedule-grid">
+                <!-- FORM BUAT JADWAL -->
+                <div class="card">
+                    <div class="card-head">
+                        <h2><i class="fa-solid fa-calendar-plus"></i> Buat Jadwal Baru</h2>
+                    </div>
+                    <form id="scheduleForm" class="schedule-form">
+                        <div class="form-group">
+                            <label>Pilih Video</label>
+                            <select id="schedVideoId" required>
+                                <option value="">— Pilih video dari database —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Tahap yang Dijadwalkan</label>
+                            <select id="schedStage">
+                                <option value="all">⚡ All-in-One (Semua Tahap)</option>
+                                <option value="analisa">🔍 Analisa Gemini</option>
+                                <option value="download">📥 Download Video</option>
+                                <option value="potong">✂️ Potong Video</option>
+                                <option value="upload">📤 Upload YouTube</option>
+                            </select>
+                        </div>
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label>Tanggal & Waktu</label>
+                                <input type="datetime-local" id="schedDateTime" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Pengulangan</label>
+                                <select id="schedRepeat">
+                                    <option value="once">Sekali Saja</option>
+                                    <option value="daily">Setiap Hari</option>
+                                    <option value="weekly">Setiap Minggu</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-full">
+                            <i class="fa-solid fa-calendar-plus"></i> Simpan Jadwal
+                        </button>
+                    </form>
+                </div>
+
+                <!-- DAFTAR JADWAL -->
+                <div class="card card-flex">
+                    <div class="card-head">
+                        <h2><i class="fa-solid fa-calendar-days"></i> Jadwal Aktif</h2>
+                        <button class="btn btn-secondary btn-sm" id="btnRefreshSchedules">
+                            <i class="fa-solid fa-arrows-rotate"></i> Refresh
+                        </button>
+                    </div>
+                    <div id="scheduleList">
+                        <div class="empty-state">
+                            <i class="fa-solid fa-calendar-xmark"></i>
+                            <p>Belum ada jadwal</p>
+                            <span>Buat jadwal baru di form sebelah kiri</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== PAGE: SETTINGS ===== -->
+        <div class="page hidden" id="page-settings">
+            <div class="settings-grid">
+                <div class="card">
+                    <div class="card-head">
+                        <h2><i class="fa-solid fa-key"></i> API & Autentikasi</h2>
+                    </div>
+                    <form id="settingsForm">
+                        <div class="form-group">
+                            <label>Gemini API Key</label>
+                            <div class="input-with-action">
+                                <input type="password" id="geminiKey" placeholder="AIza...">
+                                <button type="button" class="btn-icon-sm" id="toggleKey">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                            <span class="form-hint">Disimpan ke <code>environment.txt</code></span>
+                        </div>
+                        <div class="form-group">
+                            <label>Status YouTube OAuth</label>
+                            <div class="oauth-status-row">
+                                <div class="oauth-indicator" id="oauthIndicator">
+                                    <span class="dot dot-red"></span>
+                                    <span id="oauthStatusText">Belum terhubung</span>
+                                </div>
+                                <button type="button" class="btn btn-secondary btn-sm" id="btnYoutubeAuthSettings">
+                                    <i class="fa-brands fa-youtube"></i> Login Google
+                                </button>
+                            </div>
+                            <span class="form-hint">Diperlukan untuk upload video ke YouTube</span>
+                        </div>
+                        <div class="divider"></div>
+                        <div class="card-head" style="padding: 0 0 12px 0; border: none;">
+                            <h2><i class="fa-solid fa-closed-captioning"></i> Auto-Caption (Whisper)</h2>
+                        </div>
+                        <div class="form-group toggle-row">
+                            <label class="chk-label">
+                                <input type="checkbox" id="enableCaption">
+                                <span class="chk-box"></span>
+                                Aktifkan Auto-Caption
+                            </label>
+                        </div>
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label>Model Whisper</label>
+                                <select id="whisperModel">
+                                    <option value="tiny">Tiny — Sangat Cepat</option>
+                                    <option value="base">Base — Cepat & Akurat</option>
+                                    <option value="small">Small — Seimbang</option>
+                                    <option value="medium">Medium — Sangat Akurat</option>
+                                    <option value="large">Large — Akurasi Maksimal</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Font Caption</label>
+                                <input type="text" id="fontName" placeholder="Cooper Black">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Ukuran Font (ASS)</label>
+                            <input type="text" id="fontSize" placeholder="6" style="max-width: 120px;">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fa-solid fa-circle-check"></i> Simpan Pengaturan
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <!-- TEMA -->
+                    <div class="card-head">
+                        <h2><i class="fa-solid fa-palette"></i> Tampilan & Tema</h2>
+                    </div>
+                    <div class="form-group">
+                        <label>Pilih Tema Antarmuka</label>
+                        <div class="theme-toggle-group">
+                            <div class="theme-option active" id="themeOptDark" data-theme="dark">
+                                <div class="theme-preview tp-dark">
+                                    <div class="tp-sidebar"></div>
+                                    <div class="tp-content">
+                                        <div class="tp-bar accent"></div>
+                                        <div class="tp-bar"></div>
+                                        <div class="tp-bar" style="width:75%"></div>
+                                    </div>
+                                </div>
+                                <span class="theme-option-label"><i class="fa-solid fa-moon"></i> Gelap</span>
+                            </div>
+                            <div class="theme-option" id="themeOptLight" data-theme="light">
+                                <div class="theme-preview tp-light">
+                                    <div class="tp-sidebar"></div>
+                                    <div class="tp-content">
+                                        <div class="tp-bar accent"></div>
+                                        <div class="tp-bar"></div>
+                                        <div class="tp-bar" style="width:75%"></div>
+                                    </div>
+                                </div>
+                                <span class="theme-option-label"><i class="fa-solid fa-sun"></i> Terang</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <!-- INFO SISTEM -->
+                    <div class="card-head" style="padding: 0 0 12px 0; border: none;">
+                        <h2><i class="fa-solid fa-circle-info"></i> Informasi Sistem</h2>
+                    </div>
+                    <div class="info-list">
+                        <div class="info-row">
+                            <span class="info-key">Versi Aplikasi</span>
+                            <span class="info-val">2.0.0</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">Backend</span>
+                            <span class="info-val">FastAPI + SQLite</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">AI Engine</span>
+                            <span class="info-val">Gemini 2.5 Flash</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">Video Processing</span>
+                            <span class="info-val">FFmpeg + Whisper</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">Downloader</span>
+                            <span class="info-val">yt-dlp</span>
+                        </div>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="card-head" style="padding: 12px 0; border: none;">
+                        <h2><i class="fa-solid fa-triangle-exclamation" style="color: var(--danger)"></i> Zona Berbahaya</h2>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+                        Tindakan berikut tidak dapat dibatalkan. Semua data, video, dan klip akan dihapus permanen.
+                    </p>
+                    <button class="btn btn-danger btn-full" id="btnCleanupSettings">
+                        <i class="fa-solid fa-trash-can"></i> Bersihkan Semua Sesi & Data
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- end main-content -->
+</div><!-- end app-shell -->
+
+<!-- ===== LOG CONSOLE (FIXED BOTTOM) ===== -->
+<div class="log-panel" id="logPanel">
+    <div class="log-panel-header">
+        <div class="log-header-left">
+            <button class="btn-icon-sm" id="btnToggleLog" title="Perluas/Perkecil Konsol">
+                <i class="fa-solid fa-chevron-up" id="logToggleIcon"></i>
+            </button>
+            <span><i class="fa-solid fa-terminal"></i> Konsol Log Real-Time</span>
+            <span class="log-live-dot"></span>
+        </div>
+        <div class="log-header-right">
+            <div class="log-filters">
+                <button class="lf-btn active" data-filter="all">Semua</button>
+                <button class="lf-btn" data-filter="success">Sukses</button>
+                <button class="lf-btn" data-filter="error">Error</button>
+                <button class="lf-btn" data-filter="info">Info</button>
+            </div>
+            <label class="chk-label chk-sm">
+                <input type="checkbox" id="autoScroll" checked>
+                <span class="chk-box"></span>
+                Auto-scroll
+            </label>
+            <button class="btn-icon-sm" id="btnClearLog" title="Bersihkan Log">
+                <i class="fa-solid fa-ban"></i>
+            </button>
+        </div>
+    </div>
+    <div class="log-body" id="logBody">
+        <div class="log-line log-info">[Sistem] Konsol siap. Menunggu koneksi server...</div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
