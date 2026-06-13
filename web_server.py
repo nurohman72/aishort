@@ -5,7 +5,7 @@ import queue
 import sqlite3
 import threading
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
@@ -140,19 +140,15 @@ def log_message(video_id: Optional[int], text: str):
         if len(log_history) > 1000:
             log_history.pop(0)
             
-    # Broadcast log
-    loop = None
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        pass
+    # Broadcast log — copy listener set di bawah lock untuk hindari race condition
+    with log_lock:
+        listeners = list(log_listeners)
         
-    for q in list(log_listeners):
-        if loop and loop.is_running():
-            loop.call_soon_threadsafe(q.put_nowait, msg)
-        else:
-            # Fallback jika di luar main loop async
+    for q in listeners:
+        try:
             q.put_nowait(msg)
+        except Exception:
+            pass
 
 # ----------------- BACKGROUND SEQUENTIAL WORKER -----------------
 task_queue = queue.Queue()
@@ -162,8 +158,15 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+VALID_COLUMNS = {"status_analisis", "status_download", "status_potong", "status_upload", "error_message", "judul_video", "channel_video"}
+
 def update_video_status(video_id: int, **kwargs):
     """Mengupdate status kolom video di database secara cepat"""
+    # Validasi column name untuk cegah SQL injection
+    for col in kwargs.keys():
+        if col not in VALID_COLUMNS:
+            raise ValueError(f"Column '{col}' tidak diizinkan untuk update")
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     set_clause = ", ".join([f"{k} = ?" for k in kwargs.keys()])
@@ -173,11 +176,14 @@ def update_video_status(video_id: int, **kwargs):
     conn.commit()
     conn.close()
 
+TIMEOUT_PER_PROCESS = 600  # 10 menit maks per subprocess
+
 def execute_subprocess_live(video_id: int, stage: str, cmd: List[str]) -> bool:
     """Mengeksekusi perintah subprocess Python dan menangkap output log per baris secara real-time"""
     log_message(video_id, f"⚡ MEMULAI TAHAP: {stage.upper()}")
     log_message(video_id, f"Eksekusi perintah: {' '.join(cmd)}")
     
+    process = None
     try:
         env_custom = os.environ.copy()
         env_custom["PYTHONUNBUFFERED"] = "1"
@@ -199,12 +205,28 @@ def execute_subprocess_live(video_id: int, stage: str, cmd: List[str]) -> bool:
             if clean_line:
                 log_message(video_id, clean_line)
                 
-        process.wait()
+        # Tutup pipe stdout untuk hindari resource leak
+        process.stdout.close()
+        
+        # Tunggu dengan timeout — jika hang, process akan di-kill
+        try:
+            process.wait(timeout=TIMEOUT_PER_PROCESS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            log_message(video_id, f"❌ [TIMEOUT] Tahap {stage.upper()} melebihi batas {TIMEOUT_PER_PROCESS//60} menit, terpaksa dihentikan.")
+            return False
+        
         success = (process.returncode == 0)
         log_message(video_id, f"🏁 TAHAP {stage.upper()} selesai dengan exit code: {process.returncode}")
         return success
     except Exception as e:
         log_message(video_id, f"❌ [ERROR KRITIS] Gagal menjalankan tahap {stage}: {str(e)}")
+        if process:
+            try:
+                process.kill()
+            except Exception:
+                pass
         return False
 
 def background_worker():
@@ -530,7 +552,7 @@ def get_config():
     enable_caption = True
     font_name = "Cooper Black"
     font_size = "6"
-    whisper_model = "base"
+    whisper_model = "medium"
     
     # Cek file potong_video.py untuk membaca variabel terkininya
     if os.path.exists("potong_video.py"):
@@ -616,7 +638,7 @@ def trigger_youtube_auth():
             else:
                 log_message(None, f"❌ [Gagal] Otentikasi dibatalkan atau client_secrets.json salah: {proc.stdout}")
                 
-        threading.Thread(target=login_task, daemon=True).start()
+        threading.Thread(target=login_task, daemon=False).start()
         return {"success": True, "message": "Proses login telah dipicu. Silakan periksa jendela browser baru di komputer server untuk masuk ke Akun Google Anda."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -683,11 +705,9 @@ def run_scheduler():
                 if repeat == "once":
                     c2.execute("UPDATE schedules SET status='done', last_run=? WHERE id=?", (now_str, sched_id))
                 elif repeat == "daily":
-                    from datetime import timedelta
                     next_run = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M")
                     c2.execute("UPDATE schedules SET scheduled_at=?, last_run=? WHERE id=?", (next_run, now_str, sched_id))
                 elif repeat == "weekly":
-                    from datetime import timedelta
                     next_run = (datetime.now() + timedelta(weeks=1)).strftime("%Y-%m-%d %H:%M")
                     c2.execute("UPDATE schedules SET scheduled_at=?, last_run=? WHERE id=?", (next_run, now_str, sched_id))
                 conn2.commit()

@@ -1,7 +1,9 @@
 import os
+import re
 import sys
 import sqlite3
 import subprocess
+from datetime import datetime, timedelta
 
 # Fix encoding untuk Windows
 if sys.platform == "win32":
@@ -64,7 +66,6 @@ def cari_file_video_asli(video_url, folder_input="videos_podcast"):
         print(f"[Error] Folder '{folder_input}' tidak ditemukan!")
         sys.exit(1)
         
-    import re
     match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11})', video_url)
     yt_id = match.group(1) if match else None
     
@@ -101,11 +102,8 @@ def potong_dan_format_916(file_input, video_id, moment_id, waktu_start, waktu_se
         print(f"   [Error] Pastikan COOPBL.TTF dan logo.png ada di folder script!")
         return
 
-    # 1. SANITASI TEKS
-    judul_clean = judul_momen.replace("'", "").replace('"', '').replace("\n", " ").strip()
-    judul_clean = judul_clean.replace(":", " -").replace(",", " ")
-    judul_clean = judul_clean.replace("&", "+").replace("!", "").replace("?", "")
-    judul_clean = judul_clean.replace("(", "").replace(")", "")
+    # 1. SANITASI TEKS (hanya karakter berbahaya untuk FFmpeg drawtext)
+    judul_clean = judul_momen.replace("'", "").replace('"', '').replace("\\", "").replace("%", "").replace("\n", " ").strip()
     
     # 2. LOGIKA AUTO-WRAP 4 BARIS JUMBO (Maks 16 karakter per baris)
     words = judul_clean.split()
@@ -212,11 +210,10 @@ def potong_dan_format_916(file_input, video_id, moment_id, waktu_start, waktu_se
         )
 
         # Parse stderr FFmpeg untuk progress — FFmpeg menulis "time=HH:MM:SS.xx" ke stderr
-        import re as _re
         stderr_lines = []
         for line in proses.stderr:
             stderr_lines.append(line)
-            m = _re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
+            m = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
             if m:
                 h, mn, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
                 elapsed = h * 3600 + mn * 60 + s
@@ -290,9 +287,11 @@ def potong_dan_format_916(file_input, video_id, moment_id, waktu_start, waktu_se
 # Fungsi Bantu: Hitung durasi dari waktu_start dan waktu_selesai
 def hitung_durasi_dari_waktu(waktu_start, waktu_selesai):
     """Menghitung durasi dalam detik dari waktu_start ke waktu_selesai"""
+    # Handle NULL/None dari database (record lama sebelum migrasi)
+    if waktu_selesai is None:
+        safe_print("   [Info] waktu_selesai tidak tersedia (NULL), menggunakan durasi default 59 detik")
+        return 59
     try:
-        from datetime import datetime
-        
         # Parse waktu format HH:MM:SS
         parts_start = waktu_start.split(':')
         parts_end = waktu_selesai.split(':')
@@ -307,8 +306,10 @@ def hitung_durasi_dari_waktu(waktu_start, waktu_selesai):
             durasi = end_detik - start_detik
             return max(durasi, 1)  # Minimal 1 detik
         else:
+            safe_print("   [Info] Format waktu tidak valid, menggunakan durasi default 59 detik")
             return 59  # Fallback
-    except Exception:
+    except Exception as e:
+        safe_print(f"   [Info] Gagal hitung durasi ({e}), menggunakan default 59 detik")
         return 59  # Fallback
 
 

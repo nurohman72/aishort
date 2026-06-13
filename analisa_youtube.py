@@ -1,7 +1,9 @@
 import os
 import sys
+import re
 import json
 import sqlite3
+import requests
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -76,8 +78,6 @@ class HasilAnalisisVideo(BaseModel):
 
 # 4. FUNGSI BARU: Mengambil teks transkrip/subtitle otomatis dari YouTube
 def ambil_transkrip_youtube(video_url):
-    import re
-    import requests
     from youtube_transcript_api import YouTubeTranscriptApi
     
     print("[Info] Mencoba mengambil informasi video...")
@@ -143,6 +143,7 @@ def hapus_data_lama_jika_ada(video_url):
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             video_id INTEGER, 
             waktu_start TEXT, 
+            waktu_selesai TEXT,
             judul_menarik TEXT, 
             hashtag_terbaik TEXT, 
             deskripsi_pendek TEXT, 
@@ -151,6 +152,15 @@ def hapus_data_lama_jika_ada(video_url):
             FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE
         )
     ''')
+
+    # Migration: tambah kolom waktu_selesai jika belum ada (untuk DB lama)
+    cursor.execute("PRAGMA table_info(moments)")
+    cols = [col[1] for col in cursor.fetchall()]
+    if "waktu_selesai" not in cols:
+        try:
+            cursor.execute("ALTER TABLE moments ADD COLUMN waktu_selesai TEXT")
+        except Exception:
+            pass
     
     cursor.execute("SELECT id FROM videos WHERE url = ?", (video_url,))
     row = cursor.fetchone()

@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import pickle
 import sqlite3
@@ -89,16 +90,24 @@ def dapatkan_layanan_youtube():
     safe_print("")
     
     flow = InstalledAppFlow.from_client_secrets_file('client_secrets.json', SCOPES)
-    # Gunakan port 8080 sebagai alternatif jika 8000 sudah terpakai
-    try:
-        credentials = flow.run_local_server(port=8080, open_browser=True)
-    except:
-        # Fallback ke port 8000 jika 8080 terpakai
-        credentials = flow.run_local_server(port=8000, open_browser=True)
+    # Coba port mulai dari 8080, hindari 8000 (bentrok dengan FastAPI server)
+    oauth_ports = [8080, 8081, 8082, 8083, 8084]
+    credentials = None
+    for port in oauth_ports:
+        try:
+            credentials = flow.run_local_server(port=port, open_browser=True)
+            break
+        except Exception:
+            continue
+    if credentials is None:
+        safe_print("[Error] Tidak dapat menemukan port yang tersedia untuk OAuth (coba 8080-8084).")
+        sys.exit(1)
     
-    # Simpan kredensial untuk dijalankan otomatis di masa mendatang
-    with open('token.pickle', 'wb') as token:
+    # Simpan kredensial secara atomik (tulis ke temp dulu, lalu rename) untuk hindari korupsi file
+    temp_token = 'token.pickle.tmp'
+    with open(temp_token, 'wb') as token:
         pickle.dump(credentials, token)
+    os.replace(temp_token, 'token.pickle')  # Atomic on Windows (Python 3.3+)
     
     safe_print("[YouTube] Autentikasi berhasil! Token disimpan di 'token.pickle'.")
     return build('youtube', 'v3', credentials=credentials)
@@ -220,8 +229,7 @@ if __name__ == "__main__":
                     deskripsi   = data_momen["deskripsi"]
 
                     # Bersihkan prefix kategori emosi dari deskripsi jika ada
-                    import re as _re
-                    deskripsi_bersih = _re.sub(r'^\[.*?\]\s*', '', deskripsi).strip()
+                    deskripsi_bersih = re.sub(r'^\[.*?\]\s*', '', deskripsi).strip()
 
                     # Ekstrak hashtag dari string untuk tags API
                     tags_list = [h.lstrip('#') for h in hashtag_str.split() if h.startswith('#')]

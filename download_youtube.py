@@ -31,11 +31,16 @@ def unduh_video_youtube(url_video, folder_tujuan="downloads"):
         'outtmpl': os.path.join(folder_tujuan, '%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
         'noplaylist': True,
-        'cookiefile': 'cookies.txt',
         'progress_hooks': [progress_hook],
         'quiet': True,       # Matikan output bawaan yt-dlp agar tidak berisik
         'no_warnings': True,
     }
+    
+    # Cek cookies.txt opsional
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookiefile'] = 'cookies.txt'
+    else:
+        print("[Info] File cookies.txt tidak ditemukan. Download mungkin gagal untuk video age-restricted.", flush=True)
 
     print(f"Memulai proses pengunduhan untuk link: {url_video}", flush=True)
     print("PROGRESS_DOWNLOAD|0.0|—|—|—", flush=True)
