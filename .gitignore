@@ -12,3 +12,6 @@ token.pickle
 temp_req.txt
 environment.txt
 temp_req.txt
+cookies.txt
+database_konten.db
+clips_output/

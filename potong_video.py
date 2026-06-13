@@ -103,7 +103,7 @@ def potong_dan_format_916(file_input, video_id, moment_id, waktu_start, waktu_se
         return
 
     # 1. SANITASI TEKS (hanya karakter berbahaya untuk FFmpeg drawtext)
-    judul_clean = judul_momen.replace("'", "").replace('"', '').replace("\\", "").replace("%", "").replace("\n", " ").strip()
+    judul_clean = judul_momen.replace("'", "").replace('"', '').replace("\\", "").replace("%", "").replace("\n", " ").replace(":", "\\:").strip()
     
     # 2. LOGIKA AUTO-WRAP 4 BARIS JUMBO (Maks 16 karakter per baris)
     words = judul_clean.split()
