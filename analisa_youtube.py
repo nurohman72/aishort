@@ -270,7 +270,7 @@ Anda adalah VIRAL CONTENT STRATEGIST kelas dunia yang telah membantu ratusan cha
 Link: {url_video}
 
 === MISI ANDA ===
-Analisis transkrip di atas dan temukan 8-15 momen PALING BERPOTENSI VIRAL untuk dijadikan YouTube Shorts berdurasi 30-59 detik.
+Analisis transkrip di atas dan temukan 8-20 momen PALING BERPOTENSI VIRAL untuk dijadikan YouTube Shorts berdurasi 30-59 detik.
 
 === KRITERIA SELEKSI MOMEN (WAJIB DIPENUHI) ===
 Pilih HANYA momen yang memenuhi minimal 2 kriteria berikut:

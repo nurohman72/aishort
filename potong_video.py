@@ -27,7 +27,7 @@ def safe_print(text):
 
 # --- Parameter Auto-Captioning ---
 ENABLE_AUTOCAPTION = True
-AUTOCAPTION_MODEL = "medium"
+AUTOCAPTION_MODEL = "small"
 AUTOCAPTION_FONT = "Cooper Black"
 AUTOCAPTION_FONTSIZE = "6"
 AUTOCAPTION_ALIGN = "2"
