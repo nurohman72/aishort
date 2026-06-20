@@ -485,14 +485,28 @@ document.addEventListener("DOMContentLoaded", () => {
         const ok = await confirm("Bersihkan Semua Sesi?",
             "Ini akan menghapus SEMUA data database, video podcast, dan klip. Tindakan tidak dapat dibatalkan.");
         if (!ok) return;
+        // Feedback langsung biar user tau proses berjalan
+        toast("info", "Membersihkan sesi...", "Mohon tunggu");
         try {
             const res = await fetch("/api/cleanup", { method: "POST" });
-            if (!res.ok) throw new Error();
-            toast("success", "Sesi dibersihkan", "Semua data berhasil dihapus");
+            if (!res.ok) throw new Error(await res.text());
+            // Kosongkan state lokal langsung tanpa nunggu fetch ulang
+            videos = [];
+            moments = [];
             selectedVideoId = null;
             hideDetail();
+            updateStats();
+            renderVideoList();
+            renderVideoListFull();
+            if (document.getElementById("momentsList")) {
+                document.getElementById("momentsList").innerHTML = '<div class="empty-state"><i class="fa-solid fa-wand-magic-sparkles"></i><p>Belum ada momen</p></div>';
+            }
+            toast("success", "Sesi dibersihkan", "Semua data berhasil dihapus");
+            // Refresh dari server sebagai backup
             fetchVideos(true);
-        } catch { toast("error", "Gagal membersihkan sesi"); }
+        } catch (e) {
+            toast("error", "Gagal membersihkan sesi", String(e));
+        }
     }
 
     document.getElementById("btnCleanup").addEventListener("click", doCleanup);
@@ -599,22 +613,32 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch { toast("error", "Gagal memicu pipeline"); }
     }
 
+    function handlePipelineClick(stage) {
+        if (!selectedVideoId) {
+            toast("warning", "Pilih video dulu", "Klik baris video dari antrean");
+            return;
+        }
+        triggerStage(selectedVideoId, stage);
+    }
+
     document.getElementById("btnRunAll").addEventListener("click", () => {
-        if (selectedVideoId) triggerStage(selectedVideoId, "all");
+        handlePipelineClick("all");
     });
 
     document.getElementById("btnAnalisa").addEventListener("click", () => {
-        if (selectedVideoId) triggerStage(selectedVideoId, "analisa");
+        handlePipelineClick("analisa");
     });
 
     document.getElementById("btnDownload").addEventListener("click", () => {
-        if (selectedVideoId) triggerStage(selectedVideoId, "download");
+        handlePipelineClick("download");
     });
 
     document.getElementById("btnPotong").addEventListener("click", async () => {
-        if (!selectedVideoId) return;
+        if (!selectedVideoId) {
+            toast("warning", "Pilih video dulu", "Klik baris video dari antrean");
+            return;
+        }
 
-        // Jika moments belum di-load, fetch dulu dari server
         let targetMoments = moments;
         if (targetMoments.length === 0) {
             try {
@@ -632,7 +656,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.getElementById("btnUpload").addEventListener("click", () => {
-        if (selectedVideoId) triggerStage(selectedVideoId, "upload");
+        handlePipelineClick("upload");
     });
 
     // ==========================================
@@ -985,6 +1009,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById("btnYoutubeAuth").addEventListener("click", triggerYoutubeAuth);
     document.getElementById("btnYoutubeAuthSettings")?.addEventListener("click", triggerYoutubeAuth);
+
+    // ==========================================
+    // STOP SERVER
+    // ==========================================
+    document.getElementById("btnStopServer")?.addEventListener("click", async () => {
+        const ok = await confirm("Stop Server?", "Server web akan dimatikan. Anda harus menjalankan ulang server secara manual untuk mengakses kembali.");
+        if (!ok) return;
+        try {
+            await fetch("/api/shutdown", { method: "POST" });
+            toast("warning", "Server dimatikan", "Jendela ini tidak akan bisa digunakan lagi.");
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px;color:var(--text-2)"><i class="fa-solid fa-power-off" style="font-size:48px;color:var(--danger)"></i><h2>Server Dimatikan</h2><p>Jalankan ulang server untuk mengakses kembali.</p></div>';
+        } catch {
+            toast("error", "Gagal mematikan server");
+        }
+    });
 
     // ==========================================
     // THEME SWITCHER

@@ -15,3 +15,9 @@ temp_req.txt
 cookies.txt
 database_konten.db
 clips_output/
+config.json
+
+# Build artifacts
+build/
+dist/
+*.spec

@@ -5,6 +5,13 @@ import sqlite3
 import subprocess
 from datetime import datetime, timedelta
 
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+os.chdir(get_base_dir())
+
 # Fix encoding untuk Windows
 if sys.platform == "win32":
     try:

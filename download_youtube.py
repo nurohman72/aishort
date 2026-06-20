@@ -1,5 +1,15 @@
 import os
 import sys
+
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+os.chdir(get_base_dir())
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
 from yt_dlp import YoutubeDL
 
 def unduh_video_youtube(url_video, folder_tujuan="downloads"):

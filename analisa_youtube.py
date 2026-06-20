@@ -1,5 +1,15 @@
 import os
 import sys
+
+def get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+os.chdir(get_base_dir())
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
 import re
 import json
 import sqlite3
@@ -338,3 +348,4 @@ try:
 
 except Exception as e:
     print(f"\nTerjadi kesalahan saat memproses API: {e}")
+    sys.exit(1)

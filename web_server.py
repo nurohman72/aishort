@@ -13,11 +13,43 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
+from contextlib import asynccontextmanager
 import requests
 import schedule
 import time
 
-app = FastAPI(title="Nurohman Clipper Web API", version="1.0.0")
+# ---------- PyInstaller / bundled app helpers ----------
+def get_app_dir():
+    """Mengembalikan direktori aplikasi (tempat exe/config/data berada)"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def get_data_dir():
+    """Mengembalikan direktori data (tempat config/database/dll) — sama dengan app_dir untuk kemudahan"""
+    return get_app_dir()
+
+# Pindah ke direktori aplikasi agar semua path relatif konsisten
+os.chdir(get_app_dir())
+
+def get_pipeline_exe(stage: str) -> str:
+    """Mengembalikan path ke executable pipeline stage (exe di bundled app, .py di dev)"""
+    script_name = {
+        "analisa":  "analisa_youtube",
+        "download": "download_youtube",
+        "potong":   "potong_video",
+        "upload":   "upload_youtube",
+    }.get(stage, stage)
+    if getattr(sys, 'frozen', False):
+        return os.path.join(get_app_dir(), f"{script_name}.exe")
+    return os.path.join(get_app_dir(), f"{script_name}.py")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    migrate_db()
+    yield
+
+app = FastAPI(title="Nurohman Clipper Web API", version="1.0.0", lifespan=lifespan)
 
 # Aktifkan CORS agar frontend dapat berkomunikasi dengan lancar jika dikembangkan terpisah
 app.add_middleware(
@@ -28,7 +60,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_FILE = "database_konten.db"
+DB_FILE = os.path.join(get_app_dir(), "database_konten.db")
 
 # ----------------- DATABASE MANAGEMENT & MIGRATION -----------------
 def migrate_db():
@@ -189,11 +221,14 @@ def execute_subprocess_live(video_id: int, stage: str, cmd: List[str]) -> bool:
         env_custom["PYTHONUNBUFFERED"] = "1"
         env_custom["FONTCONFIG_FILE"] = "<nul>"
         
+        enc = 'utf-8' if sys.platform == "win32" else None
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding=enc,
+            errors='replace',
             shell=False,
             bufsize=1,
             env=env_custom
@@ -279,16 +314,22 @@ def background_worker():
                 status_key = STAGE_COL[current_stage]
                 update_video_status(video_id, **{status_key: "processing", "error_message": None})
                 
-                # Menentukan perintah command line
-                cmd = []
+                # Menentukan perintah command line (PyInstaller-aware)
+                exe_path = get_pipeline_exe(current_stage)
+                if getattr(sys, 'frozen', False):
+                    # Bundled app — jalankan exe langsung
+                    cmd = [exe_path]
+                else:
+                    # Dev mode — jalankan dengan python
+                    cmd = [sys.executable, exe_path]
                 if current_stage == "analisa":
-                    cmd = [sys.executable, "analisa_youtube.py", video_url]
+                    cmd.append(video_url)
                 elif current_stage == "download":
-                    cmd = [sys.executable, "download_youtube.py", video_url]
+                    cmd.append(video_url)
                 elif current_stage == "potong":
-                    cmd = [sys.executable, "potong_video.py", str(video_id)]
+                    cmd.append(str(video_id))
                 elif current_stage == "upload":
-                    cmd = [sys.executable, "upload_youtube.py", str(video_id)]
+                    cmd.append(str(video_id))
                     
                 # Eksekusi
                 stage_success = execute_subprocess_live(video_id, current_stage, cmd)
@@ -299,6 +340,12 @@ def background_worker():
                     update_video_status(video_id, **{status_key: "failed", "error_message": f"Gagal pada tahap {current_stage}"})
                     success = False
                     log_message(video_id, f"❌ Pipeline dihentikan karena kegagalan pada tahap: {current_stage}")
+                    # Reset semua stage yang belum diproses dari 'processing' ke 'pending'
+                    if stage == "all":
+                        remaining = {"analisa": "status_analisis", "download": "status_download", "potong": "status_potong", "upload": "status_upload"}
+                        for s, col in remaining.items():
+                            if s not in stages_to_run[:stages_to_run.index(current_stage)+1]:
+                                update_video_status(video_id, **{col: "pending"})
                     break  # Stop pipeline jika ada yang gagal di tengah jalan
                     
             if success and stage == "all":
@@ -339,16 +386,10 @@ class ScheduleInput(BaseModel):
 
 # ----------------- API ENDPOINTS -----------------
 
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     migrate_db()
-    # Pastikan folder esensial ada
-    for folder in ["videos_podcast", "clips_output"]:
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-
     # Reset status 'processing' yang tertinggal akibat crash/restart server
-    # Ubah ke 'failed' agar user bisa trigger ulang tanpa tombol ter-disable
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -370,10 +411,9 @@ def startup_event():
             print(f"[Startup] Reset {affected} video dari status 'processing' → 'failed' akibat restart.")
     except Exception as e:
         print(f"[Startup] Gagal reset status processing: {e}")
-
-    # Jalankan scheduler thread
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
+    yield
 
 @app.get("/api/videos")
 def get_videos():
@@ -450,7 +490,7 @@ def delete_video(video_id: int):
     log_message(video_id, f"🗑️ Menghapus video dari database: '{video_row['judul_video']}'")
     
     # Hapus file hasil potongan di clips_output (misal: "videoID_momentID.mp4")
-    clips_folder = "clips_output"
+    clips_folder = os.path.join(get_app_dir(), "clips_output")
     if os.path.exists(clips_folder):
         deleted_files = 0
         for f in os.listdir(clips_folder):
@@ -479,7 +519,7 @@ def get_moments(video_id: int):
         m = dict(r)
         # Tambahkan path video hasil potong jika sudah ada di folder clips_output
         file_clip_name = f"{video_id}_{m['id']}.mp4"
-        path_clip = os.path.join("clips_output", file_clip_name)
+        path_clip = os.path.join(get_app_dir(), "clips_output", file_clip_name)
         m["has_clip"] = os.path.exists(path_clip)
         m["clip_url"] = f"/clips/{file_clip_name}" if m["has_clip"] else None
         moments.append(m)
@@ -536,26 +576,37 @@ ENV_FILE = "environment.txt"
 
 @app.get("/api/config")
 def get_config():
-    """Membaca pengaturan/konfigurasi aplikasi dari environment.txt dan script default"""
+    """Membaca pengaturan/konfigurasi aplikasi dari environment.txt dan config.json"""
+    app_dir = get_app_dir()
+    env_path = os.path.join(app_dir, ENV_FILE)
     gemini_key = ""
-    if os.path.exists(ENV_FILE):
+    if os.path.exists(env_path):
         try:
-            with open(ENV_FILE, "r") as f:
+            with open(env_path, "r") as f:
                 for line in f:
                     if line.startswith("GEMINI_API_KEY="):
                         gemini_key = line.replace("GEMINI_API_KEY=", "").strip()
         except Exception as e:
             print(f"Gagal baca config: {e}")
             
-    # Baca setingan caption dari potong_video.py secara dinamis jika memungkinkan
-    # Kita berikan nilai fallback default yang sesuai dengan file potong_video.py Anda
+    # Baca setingan caption dari config.json (atau file potong_video.py sebagai fallback)
     enable_caption = True
     font_name = "Cooper Black"
     font_size = "6"
     whisper_model = "medium"
-    
-    # Cek file potong_video.py untuk membaca variabel terkininya
-    if os.path.exists("potong_video.py"):
+    config_path = os.path.join(get_app_dir(), "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                cfg = json.load(f)
+                enable_caption = cfg.get("enable_caption", enable_caption)
+                font_name = cfg.get("font_name", font_name)
+                font_size = cfg.get("font_size", font_size)
+                whisper_model = cfg.get("whisper_model", whisper_model)
+        except Exception as e:
+            print(f"Peringatan membaca config.json: {e}")
+    # Fallback: baca dari potong_video.py jika ada (hanya di dev mode)
+    elif not getattr(sys, 'frozen', False) and os.path.exists("potong_video.py"):
         try:
             with open("potong_video.py", "r") as f:
                 for line in f:
@@ -571,7 +622,8 @@ def get_config():
             print(f"Peringatan membaca config dari potong_video.py: {e}")
             
     # Cek YouTube OAuth token.pickle status
-    has_youtube_auth = os.path.exists("token.pickle")
+    token_path = os.path.join(get_app_dir(), "token.pickle")
+    has_youtube_auth = os.path.exists(token_path)
     
     return {
         "gemini_key": gemini_key,
@@ -584,40 +636,38 @@ def get_config():
 
 @app.post("/api/config")
 def update_config(payload: ConfigUpdate):
-    """Menyimpan Gemini API key ke environment.txt dan memperbarui setingan di potong_video.py"""
+    """Menyimpan Gemini API key ke environment.txt dan config.json"""
+    app_dir = get_app_dir()
     # 1. Simpan Gemini API Key
     try:
-        with open(ENV_FILE, "w") as f:
+        env_path = os.path.join(app_dir, ENV_FILE)
+        with open(env_path, "w") as f:
             f.write(f"GEMINI_API_KEY={payload.gemini_key.strip()}\n")
         log_message(None, "⚙️ Gemini API Key berhasil diperbarui di environment.txt.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal menulis environment.txt: {e}")
         
-    # 2. Perbarui variabel di potong_video.py
-    if os.path.exists("potong_video.py"):
-        try:
-            with open("potong_video.py", "r") as f:
-                lines = f.readlines()
-                
-            new_lines = []
-            for line in lines:
-                if line.startswith("ENABLE_AUTOCAPTION ="):
-                    new_lines.append(f"ENABLE_AUTOCAPTION = {payload.enable_caption}\n")
-                elif line.startswith("AUTOCAPTION_FONT ="):
-                    new_lines.append(f"AUTOCAPTION_FONT = \"{payload.font_name}\"\n")
-                elif line.startswith("AUTOCAPTION_FONTSIZE ="):
-                    new_lines.append(f"AUTOCAPTION_FONTSIZE = \"{payload.font_size}\"\n")
-                elif line.startswith("AUTOCAPTION_MODEL ="):
-                    new_lines.append(f"AUTOCAPTION_MODEL = \"{payload.whisper_model}\"\n")
-                else:
-                    new_lines.append(line)
-                    
-            with open("potong_video.py", "w") as f:
-                f.writelines(new_lines)
-            log_message(None, "⚙️ Pengaturan video caption diperbarui di potong_video.py.")
-        except Exception as e:
-            log_message(None, f"[Warning] Gagal mengupdate potong_video.py: {e}")
-            
+    # 2. Simpan ke config.json
+    try:
+        config_path = os.path.join(app_dir, "config.json")
+        config_data = {
+            "enable_caption": payload.enable_caption,
+            "font_name": payload.font_name,
+            "font_size": payload.font_size,
+            "whisper_model": payload.whisper_model,
+        }
+        # Baca config lama dulu untuk merge
+        existing = {}
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                existing = json.load(f)
+        existing.update(config_data)
+        with open(config_path, "w") as f:
+            json.dump(existing, f, indent=2)
+        log_message(None, "⚙️ Pengaturan video caption diperbarui di config.json.")
+    except Exception as e:
+        log_message(None, f"[Warning] Gagal mengupdate config.json: {e}")
+        
     return {"success": True}
 
 @app.post("/api/youtube-auth")
@@ -626,13 +676,17 @@ def trigger_youtube_auth():
     log_message(None, "🔑 Memulai proses otentikasi YouTube API...")
     try:
         # Kita jalankan skrip upload secara parsial untuk memicu login browser jika pickle belum ada
-        # Buat dummy/uji coba singkat dengan me-run import auth
-        cmd = [sys.executable, "-c", "import upload_youtube; upload_youtube.dapatkan_layanan_youtube()"]
+        app_dir = get_app_dir()
+        if getattr(sys, 'frozen', False):
+            cmd = [os.path.join(app_dir, "upload_youtube.exe")]  # login via OAuth flow di exe
+        else:
+            cmd = [sys.executable, "-c", "import upload_youtube; upload_youtube.dapatkan_layanan_youtube()"]
         
         # Jalankan secara terpisah tanpa block utama web agar user bisa login browser
         # Karena InstalledAppFlow.run_local_server membuka browser lokal, backend akan terblokir sampai login selesai
         def login_task():
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            enc = 'utf-8' if sys.platform == "win32" else None
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding=enc, errors='replace')
             if proc.returncode == 0:
                 log_message(None, "✅ [Sukses] Kredensial YouTube berhasil disimpan (token.pickle)!")
             else:
@@ -642,6 +696,18 @@ def trigger_youtube_auth():
         return {"success": True, "message": "Proses login telah dipicu. Silakan periksa jendela browser baru di komputer server untuk masuk ke Akun Google Anda."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/shutdown")
+def shutdown_server():
+    """Mematikan server web secara paksa"""
+    import threading
+    log_message(None, "🛑 Server dimatikan oleh pengguna melalui tombol Stop.")
+    def _kill():
+        import time
+        time.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=_kill, daemon=True).start()
+    return {"success": True, "message": "Server akan dimatikan dalam 0,5 detik..."}
 
 @app.post("/api/cleanup")
 def cleanup_all():
@@ -660,11 +726,13 @@ def cleanup_all():
         log_message(None, "🧹 [Database] Semua riwayat dan momen berhasil dikosongkan.")
         
         # 2. Bersihkan file podcast
+        app_dir = get_app_dir()
         for folder in ["videos_podcast", "clips_output"]:
+            folder_path = os.path.join(app_dir, folder)
             deleted_count = 0
-            if os.path.exists(folder):
-                for f in os.listdir(folder):
-                    file_path = os.path.join(folder, f)
+            if os.path.exists(folder_path):
+                for f in os.listdir(folder_path):
+                    file_path = os.path.join(folder_path, f)
                     if os.path.isfile(file_path):
                         try:
                             os.remove(file_path)
@@ -798,15 +866,29 @@ async def stream_logs(request: Request):
 
 # ----------------- SERVING STATIC FILES & FRONTEND -----------------
 
+# Pastikan folder esensial ada sebelum mount static files
+_app_dir = get_app_dir()
+for _folder in ["videos_podcast", "clips_output"]:
+    _path = os.path.join(_app_dir, _folder)
+    if not os.path.exists(_path):
+        os.makedirs(_path)
+
 # Sajikan file video hasil pemotongan agar video player di browser dapat membacanya langsung
-app.mount("/clips", StaticFiles(directory="clips_output"), name="clips")
+app.mount("/clips", StaticFiles(directory=os.path.join(get_app_dir(), "clips_output")), name="clips")
 
 # Sajikan folder statis frontend web_static
-STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web_static")
+STATIC_DIR = os.path.join(get_app_dir(), "web_static")
 if not os.path.exists(STATIC_DIR):
-    os.makedirs(STATIC_DIR)
+    if getattr(sys, 'frozen', False):
+        STATIC_DIR = os.path.join(get_app_dir(), "_internal", "web_static")
+    else:
+        os.makedirs(STATIC_DIR, exist_ok=True)
+if not os.path.exists(STATIC_DIR):
+    print(f"[WARN] STATIC_DIR '{STATIC_DIR}' tidak ditemukan, membuat...")
+    os.makedirs(STATIC_DIR, exist_ok=True)
 
-app.mount("/", StaticFiles(directory="web_static", html=True), name="static")
+# Mount static files — gunakan html=True agar index.html otomatis tersaji di /
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
@@ -819,4 +901,7 @@ if __name__ == "__main__":
     print("-> http://localhost:8000")
     print("="*60 + "\n")
     
-    uvicorn.run("web_server:app", host="127.0.0.1", port=8000, reload=True)
+    if getattr(sys, 'frozen', False):
+        uvicorn.run(app, host="127.0.0.1", port=8000)
+    else:
+        uvicorn.run("web_server:app", host="127.0.0.1", port=8000, reload=True)
