@@ -163,15 +163,7 @@ def hapus_data_lama_jika_ada(video_url):
         )
     ''')
 
-    # Migration: tambah kolom waktu_selesai jika belum ada (untuk DB lama)
-    cursor.execute("PRAGMA table_info(moments)")
-    cols = [col[1] for col in cursor.fetchall()]
-    if "waktu_selesai" not in cols:
-        try:
-            cursor.execute("ALTER TABLE moments ADD COLUMN waktu_selesai TEXT")
-        except Exception:
-            pass
-    
+    # Migration dilakukan otomatis oleh web_server.py saat startup
     cursor.execute("SELECT id FROM videos WHERE url = ?", (video_url,))
     row = cursor.fetchone()
     if row:

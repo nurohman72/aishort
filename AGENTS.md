@@ -6,7 +6,7 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 
 ## Tech Stack
 
-- **Backend:** Python 3.14, FastAPI, Uvicorn, SQLite, Pydantic, SSE-Starlette
+- **Backend:** Python 3.13, FastAPI, Uvicorn, SQLite, Pydantic, SSE-Starlette
 - **Frontend:** Vanilla JS SPA, HTML5, CSS3 (CSS variables, glassmorphism, dark/light themes)
 - **AI/Video:** Google Gemini 2.5 Flash, yt-dlp, FFmpeg, OpenAI Whisper (PyTorch)
 - **Auth:** Google OAuth, YouTube Data API v3
@@ -21,72 +21,6 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 | `python download_youtube.py <URL>` | Download video standalone |
 | `python potong_video.py <VIDEO_ID>` | Cut clips standalone |
 | `python upload_youtube.py <VIDEO_ID>` | Upload clips standalone |
-| `build_exe.bat` | Build all executables with PyInstaller |
-
-## Build (PyInstaller Executable)
-
-### Prerequisites
-- `pip install pyinstaller`
-- FFmpeg (`ffmpeg.exe`) di PATH atau di folder output
-- `client_secrets.json` (YouTube OAuth)
-- `environment.txt` berisi `GEMINI_API_KEY=...`
-
-### Build Script
-`build_exe.bat` meng-compile 5 script jadi executable:
-
-| Stage | Mode | Output |
-|---|---|---|
-| `web_server.py` | `--onedir` | `NurClipper.exe` + `_internal/` |
-| `analisa_youtube.py` | `--onefile` | `analisa_youtube.exe` |
-| `download_youtube.py` | `--onefile` | `download_youtube.exe` |
-| `potong_video.py` | `--onefile` | `potong_video.exe` |
-| `upload_youtube.py` | `--onefile` | `upload_youtube.exe` |
-
-Hasil build: `dist/NurClipper/`
-
-### Output Structure
-```
-dist/NurClipper/
-├── NurClipper.exe          (main server, ~11 MB)
-├── _internal/              (DLLs, Python runtime, modules)
-│   ├── web_static/         (frontend HTML/CSS/JS)
-│   └── ...
-├── analisa_youtube.exe     (~36 MB)
-├── download_youtube.exe    (~27 MB)
-├── potong_video.exe        (~213 MB, includes PyTorch + Whisper CPU)
-├── upload_youtube.exe      (~35 MB)
-└── environment.txt         (template, isi GEMINI_API_KEY=...)
-```
-
-### Known Issues & Fixes
-
-| Issue | Fix |
-|---|---|
-| `clips_output` dir not found | Auto-create sebelum mount static files di `web_server.py` |
-| `on_event` deprecation warning | Migrasi ke lifespan context manager (`@asynccontextmanager`) |
-| `Could not import module "web_server"` | Frozen mode: `uvicorn.run(app, ...)` langsung, bukan string |
-| `web_static` tidak ditemukan | Fallback ke `get_app_dir()/_internal/web_static` di frozen/onedir mode |
-| `StaticFiles html=True` 404 | Sekarang root `/` serve index.html dengan benar |
-| cp1252 encoding crash subprocess | `sys.stdout.reconfigure(encoding='utf-8')` di setiap script |
-| Subprocess decode error | `errors='replace'` di `subprocess.Popen`/`subprocess.run` |
-| Gemini 503 not error | `sys.exit(1)` di `analisa_youtube.py` after except |
-| Pipeline gagal di tengah | Reset stage lain dari "processing" ke "pending" |
-| Upload gagal exit code 0 | `sys.exit(1)` di `upload_youtube.py` saat `counter_upload == 0` |
-| ResumableUploadError empty message | Log `e.resp.status` + `e.content`; deteksi quota via status 403 |
-| Locked `dist/NurClipper` | Hapus manual dengan `rmdir /s /q` atau gunakan folder baru |
-
-## PyInstaller Path Helpers
-
-Setiap script punya `get_base_dir()` / `get_app_dir()` yang mendeteksi frozen mode via `getattr(sys, 'frozen', False)`:
-
-```python
-def get_app_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-```
-
-Semua path absolut (DB, config, output dirs, static files) menggunakan helper ini agar konsisten antara dev dan bundled mode.
 
 ## Key Conventions
 
@@ -125,16 +59,27 @@ Semua path absolut (DB, config, output dirs, static files) menggunakan helper in
 
 ## Important Files
 
-| File | Lines | Purpose |
+| File | Purpose |
 |---|---|---|
-| `web_server.py` | ~900 | Main entry point + API + PyInstaller helpers |
-| `analisa_youtube.py` | ~350 | AI analysis with Gemini |
-| `download_youtube.py` | ~150 | yt-dlp downloader |
-| `potong_video.py` | ~350 | FFmpeg cutting + captioning |
-| `upload_youtube.py` | ~280 | YouTube Data API uploader |
-| `autocaption.py` | ~110 | Whisper subtitle pipeline |
-| `web_static/app.js` | ~1000 | Frontend SPA logic |
-| `web_static/style.css` | ~1600 | Design system |
-| `web_static/index.html` | ~700 | Main HTML page |
-| `build_exe.bat` | ~150 | PyInstaller build script |
-| `NurClipper.py` | legacy | Legacy Tkinter GUI (v1) |
+| `web_server.py` | Main entry point (847 lines) |
+| `analisa_youtube.py` | AI analysis with Gemini |
+| `download_youtube.py` | yt-dlp downloader |
+| `potong_video.py` | FFmpeg cutting + captioning |
+| `upload_youtube.py` | YouTube Data API uploader (268 lines) |
+| `autocaption.py` | Whisper subtitle pipeline |
+| `web_static/app.js` | Frontend SPA logic (943 lines) |
+| `web_static/style.css` | Design system (~1337 lines) |
+| `web_static/index.html` | Main HTML page |
+| `NurClipper.py` | Legacy Tkinter GUI (v1) |
+
+## Key Endpoints (v2.2.0 additions)
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/reset/{video_id}` | POST | Reset semua status tahap ke `pending` |
+
+## Pipeline Recovery
+- If "all" stage pipeline fails mid-way, remaining stages are auto-reset to `pending`
+- Worker loop has inner try/except that resets all statuses to `failed` on crash
+- Periodic stale cleanup thread runs every 5 minutes
+- Frontend has "Reset" button for manual recovery
+- Startup resets any stale `processing` → `failed`

@@ -8,6 +8,7 @@
 
 | Versi | Tanggal | Perubahan Utama |
 |-------|---------|-----------------|
+| **2.2.0** | June 2026 | Pipeline auto-recovery, error handling overhaul, reset API, periodic stale cleanup, safety improvements |
 | **2.1.0** | June 2026 | Durasi max 59 detik, auto-refresh token, encoding fix, database schema update, start.bat, start_debug.bat |
 | **2.0.0** | May 2026 | Web-based app, dark/light theme, real-time SSE, scheduler |
 
@@ -371,6 +372,67 @@ pip install -r requirements.txt
 
 # 📝 Perubahan & Update Terbaru
 
+## Version 2.2.0 (June 2026)
+
+### 🎯 Fitur Baru
+
+#### Pipeline Auto-Recovery
+- **Fitur**: Jika pipeline "All-in-One" gagal di tengah jalan, status tahap yang tersisa otomatis direset ke `pending` bukan stuck di `processing`
+- **Implementasi**:
+  - `web_server.py`: Background worker reset `status_download`, `status_potong`, `status_upload` yang masih `processing` saat tahap analisa gagal
+  - Worker loop dibungkus try/except agar error crash tidak meninggalkan status menggantung
+
+#### Reset Status API
+- **Fitur**: Endpoint baru `/api/reset/{video_id}` untuk reset manual status video yang stuck
+- **Implementasi**:
+  - Semua status tahap dikembalikan ke `pending`, `error_message` dihapus
+  - Tombol "Reset" baru di pipeline header (samping All-in-One)
+
+#### Periodic Stale Cleanup
+- **Fitur**: Background thread otomatis memeriksa dan mereset status `processing` yang macet setiap 5 menit
+- **Implementasi**: `web_server.py` — thread daemon `stale_status_cleanup()` berjalan startup
+
+#### Better Error Handling Upload
+- **Fitur**: Error upload YouTube sekarang menampilkan HTTP status code dan detail dari Google API
+- **Implementasi**:
+  - `HttpError` khusus: tampilkan status code & pesan error asli
+  - Deteksi otomatis: 403 (quota), 401 (auth expired)
+  - Fallback: traceback untuk error tidak dikenal
+
+### 🔧 Perbaikan Bug
+
+#### Bug #1: Pipeline "all" stuck di "processing" setelah gagal
+- **Gejala**: Tombol stage tetap disabled karena status `processing` tidak pernah direset
+- **Penyebab**: `trigger_stage()` set semua 4 status ke `processing`, tapi worker hanya update 1 yang gagal
+- **Solusi**: Worker sekarang mereset sisa stage ke `pending` saat pipeline gagal
+
+#### Bug #2: Error upload dengan pesan kosong
+- **Gejala**: `[Gagal] Terjadi error saat upload video ini: ` (pesan kosong)
+- **Penyebab**: `str(e)` mengembalikan string kosong untuk `HttpError` tertentu
+- **Solusi**: Tangkap `HttpError` secara spesifik, parse response body untuk detail
+
+#### Bug #3: Worker crash meninggalkan status menggantung
+- **Gejala**: Worker error fatal menyebabkan status "processing" selamanya
+- **Penyebab**: Tidak ada try/except di inner loop worker
+- **Solusi**: Inner task dibungkus try/except dengan reset status di `finally`
+
+### 📄 File yang Dimodifikasi
+
+| File | Perubahan |
+|------|-----------|
+| `web_server.py` | Reset remaining stages, inner try/except, `/api/reset/{video_id}`, periodic stale cleanup |
+| `upload_youtube.py` | Error handling overhaul: HttpError, status code, traceback, deteksi quota & auth |
+| `web_static/index.html` | Tombol "Reset" di pipeline header |
+| `web_static/style.css` | Style `.btn-warning-ghost`, `.pipeline-actions` |
+| `web_static/app.js` | Reset button handler, auto-refresh UI on failure/success logs |
+
+### ⚠️ Catatan Penting
+
+1. **Auto-Recovery Pipeline**: Pipeline All-in-One yang gagal sekarang otomatis mereset stage tersisa. Tidak perlu restart server.
+2. **Manual Reset**: Jika ada status yang tetap `processing` karena alasan lain, gunakan tombol **Reset** di panel detail video.
+3. **Periodic Cleanup**: Setiap 5 menit, server otomatis membersihkan status `processing` yang macet.
+4. **Error Upload Detail**: Error upload sekarang menampilkan HTTP status (403=quota, 401=auth) untuk diagnosis cepat.
+
 ## Version 2.1.0 (June 2026)
 
 ### 🎯 Fitur Baru
@@ -544,4 +606,4 @@ MIT License - lihat [LICENSE](LICENSE) file untuk detail.
 **NurClipper** - Automate Your YouTube Shorts Creation 🚀
 
 *Terakhir diperbarui: June 2026*
-*Version: 2.1.0*
+*Version: 2.2.0*

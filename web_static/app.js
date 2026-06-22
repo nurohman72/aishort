@@ -215,13 +215,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 // ── Log biasa ────────────────────────────────────────────
                 appendLog(d.text);
 
-                // Deteksi selesainya tahap analisa dari log real-time
-                if (
-                    d.video_id &&
-                    d.video_id === selectedVideoId &&
-                    /TAHAP ANALISA.*exit code: 0|Data analisis.*berhasil disimpan/i.test(d.text)
-                ) {
-                    setTimeout(() => fetchMoments(selectedVideoId), 800);
+                // Auto-refresh UI saat ada perubahan status (berhasil/gagal)
+                if (d.video_id && d.video_id === selectedVideoId) {
+                    if (/TAHAP ANALISA.*exit code: 0|Data analisis.*berhasil disimpan/i.test(d.text)) {
+                        setTimeout(() => fetchMoments(selectedVideoId), 800);
+                    }
+                    if (/exit code: [1-9]|❌|Gagal|gagal|ERROR|error|failed/i.test(d.text)) {
+                        setTimeout(() => fetchVideos(false), 500);
+                    }
+                    if (/🏁|SUKSES|sukses|selesai dengan sukses/i.test(d.text)) {
+                        setTimeout(() => fetchVideos(false), 500);
+                    }
                 }
             } catch {}
         };
@@ -659,6 +663,19 @@ document.addEventListener("DOMContentLoaded", () => {
         handlePipelineClick("upload");
     });
 
+    document.getElementById("btnResetStatus").addEventListener("click", async () => {
+        if (!selectedVideoId) return;
+        const ok = await confirm("Reset Status Video?",
+            "Semua status tahap akan di-reset ke 'pending' agar tombol bisa digunakan kembali.");
+        if (!ok) return;
+        try {
+            const res = await fetch(`/api/reset/${selectedVideoId}`, { method: "POST" });
+            if (!res.ok) throw new Error();
+            toast("success", "Status di-reset", "Semua tahap kembali ke 'pending'");
+            fetchVideos(false);
+        } catch { toast("error", "Gagal mereset status"); }
+    });
+
     // ==========================================
     // VIDEO PREVIEW
     // ==========================================
@@ -811,7 +828,10 @@ document.addEventListener("DOMContentLoaded", () => {
             chk.checked = e.target.checked;
             chk.closest(".moment-item").classList.toggle("unselected", !e.target.checked);
         });
-        moments.forEach(m => { m.is_selected = val; saveMoment(m.id, "is_selected", val); });
+        moments.reduce((promise, m) => {
+            m.is_selected = val;
+            return promise.then(() => new Promise(r => setTimeout(r, 50))).then(() => saveMoment(m.id, "is_selected", val));
+        }, Promise.resolve());
     });
 
     document.getElementById("searchMoment").addEventListener("input", (e) => {

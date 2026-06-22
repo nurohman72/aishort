@@ -7,17 +7,12 @@ __pycache__/
 *.mp4
 client_secrets.json
 environment.txt
-client_secrets.json
 token.pickle
-temp_req.txt
-environment.txt
 temp_req.txt
 cookies.txt
 database_konten.db
-clips_output/
-config.json
-
-# Build artifacts
-build/
-dist/
-*.spec
+*.db
+*.pickle
+*.log
+.agents/
+BRAINSTORMING.md

@@ -5,13 +5,6 @@ import sqlite3
 import subprocess
 from datetime import datetime, timedelta
 
-def get_base_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-os.chdir(get_base_dir())
-
 # Fix encoding untuk Windows
 if sys.platform == "win32":
     try:
@@ -26,11 +19,19 @@ def safe_print(text):
         print(text)
     except UnicodeEncodeError:
         try:
-            encoded_text = text.encode('utf-8', errors='replace').decode('utf-8')
-            print(encoded_text)
-        except:
-            ascii_text = ''.join(char for char in text if ord(char) < 128)
-            print(ascii_text)
+            import sys as _sys
+            encoded_bytes = text.encode(_sys.stdout.encoding or 'utf-8', errors='replace')
+            print(encoded_bytes.decode(_sys.stdout.encoding or 'utf-8'))
+        except Exception:
+            print(text.encode('utf-8', errors='replace').decode('utf-8', errors='replace'))
+
+def cek_ffmpeg():
+    """Memastikan FFmpeg tersedia di PATH"""
+    try:
+        subprocess.run(['ffmpeg', '-version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("[Error] FFmpeg tidak ditemukan! Pastikan FFmpeg terinstal dan tersedia di PATH.")
+        sys.exit(1)
 
 # --- Parameter Auto-Captioning ---
 ENABLE_AUTOCAPTION = True
@@ -109,8 +110,8 @@ def potong_dan_format_916(file_input, video_id, moment_id, waktu_start, waktu_se
         print(f"   [Error] Pastikan COOPBL.TTF dan logo.png ada di folder script!")
         return
 
-    # 1. SANITASI TEKS (hanya karakter berbahaya untuk FFmpeg drawtext)
-    judul_clean = judul_momen.replace("'", "").replace('"', '').replace("\\", "").replace("%", "").replace("\n", " ").replace(":", "\\:").strip()
+    # 1. SANITASI TEKS (hapus karakter berbahaya untuk FFmpeg drawtext)
+    judul_clean = judul_momen.replace("'", "").replace('"', '').replace("\\", "").replace("%", "").replace(":", "").replace("\n", " ").strip()
     
     # 2. LOGIKA AUTO-WRAP 4 BARIS JUMBO (Maks 16 karakter per baris)
     words = judul_clean.split()
@@ -210,7 +211,7 @@ def potong_dan_format_916(file_input, video_id, moment_id, waktu_start, waktu_se
         # Jalankan FFmpeg dengan stderr real-time untuk parse progress
         proses = subprocess.Popen(
             perintah,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             env=env_kustom
@@ -268,7 +269,7 @@ def potong_dan_format_916(file_input, video_id, moment_id, waktu_start, waktu_se
                     if os.path.exists(path_output):
                         try:
                             os.remove(path_output)
-                        except:
+                        except Exception:
                             pass
                     os.rename(path_ffmpeg_output, path_output)
                 finally:
@@ -322,6 +323,7 @@ def hitung_durasi_dari_waktu(waktu_start, waktu_selesai):
 
 # --- Alur Utama Program ---
 if __name__ == "__main__":
+    cek_ffmpeg()
     if len(sys.argv) < 2:
         print("\n[Error] Anda belum memasukkan ID Video!")
         print("Cara menjalankan: python .\\potong_video.py <ID_VIDEO>")

@@ -457,6 +457,13 @@ select option { background: #1a1d26; }
 }
 .btn-danger-ghost:hover { background: var(--danger-bg); }
 
+.btn-warning-ghost {
+    background: transparent;
+    border-color: rgba(255,183,77,0.2);
+    color: var(--warning);
+}
+.btn-warning-ghost:hover { background: rgba(255,183,77,0.1); }
+
 .btn-success {
     background: var(--success-bg);
     border-color: rgba(46,213,115,0.3);
@@ -671,6 +678,10 @@ select option { background: #1a1d26; }
 }
 
 .pipeline-header h4 i { color: var(--accent); }
+
+.pipeline-actions {
+    display: flex; align-items: center; gap: 6px;
+}
 
 .pipeline-stepper {
     display: flex; align-items: center;

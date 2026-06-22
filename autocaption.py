@@ -1,10 +1,20 @@
 import argparse
 import os
+import sys
 import subprocess
 import whisper
 from whisper.utils import get_writer
 
+def cek_ffmpeg():
+    """Memastikan FFmpeg tersedia di PATH"""
+    try:
+        subprocess.run(['ffmpeg', '-version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("[Error] FFmpeg tidak ditemukan! Pastikan FFmpeg terinstal dan tersedia di PATH.")
+        sys.exit(1)
+
 def extract_audio(video_path, audio_path):
+    cek_ffmpeg()
     print(f"Mengekstrak audio dari {video_path}...")
     command = [
         "ffmpeg", "-y",
@@ -56,7 +66,7 @@ def burn_subtitles(video_path, srt_path, output_path, font_name, font_size, alig
     command = [
         "ffmpeg", "-y",
         "-i", video_path,
-        "-vf", f"subtitles='{safe_srt_path}':fontsdir='fonts':force_style='{style}'",
+        "-vf", f"subtitles='{safe_srt_path}':force_style='{style}'",
         "-c:a", "copy",
         output_path
     ]
