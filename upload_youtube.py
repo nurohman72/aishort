@@ -210,6 +210,7 @@ if __name__ == "__main__":
     safe_print("[3/3] Memulai pemindaian file video di folder output...\n")
     
     counter_upload = 0
+    ada_error = False
     files = [f for f in os.listdir(folder_clips) if f.endswith('.mp4')]
     
     for file_name in files:
@@ -252,30 +253,49 @@ if __name__ == "__main__":
                         counter_upload += 1
                     except HttpError as e:
                         status_code = e.status_code if hasattr(e, 'status_code') else '?'
-                        reason = ""
+                        err_reason = ""
+                        err_detail = ""
                         try:
                             err_body = json.loads(e.content.decode()) if hasattr(e, 'content') else {}
-                            reason = err_body.get('error', {}).get('message', str(e))
+                            err_reason = err_body.get('error', {}).get('errors', [{}])[0].get('reason', '')
+                            err_detail = err_body.get('error', {}).get('message', str(e))
                         except Exception:
-                            reason = str(e)
-                        safe_print(f"   [Gagal] HTTP {status_code}: {reason}")
-                        if status_code == 403 or "quota" in reason.lower() or "quotaExceeded" in reason:
-                            safe_print("\n   [PENTING] Kuota Harian YouTube API gratis Anda mungkin telah habis!")
-                            safe_print("   Detail: Secara default, Google Cloud memberikan kuota harian 10.000 unit per hari.")
-                            safe_print("   Setiap 1x upload video memerlukan biaya kuota sebesar 1.600 unit, sehingga batas maksimalnya")
-                            safe_print("   adalah sekitar 6 video saja per hari untuk satu API Key/Project.")
-                            safe_print("   Solusi: Anda dapat mengajukan permohonan penambahan kuota di Google Cloud Console,")
-                            safe_print("   atau menggunakan API Key/client_secrets.json dari akun developer Google yang lain,")
-                            safe_print("   atau melanjutkan proses upload sisa videonya besok.\n")
+                            err_detail = str(e)
+                        safe_print(f"   [Gagal] HTTP {status_code}: {err_detail}")
+                        if err_reason:
+                            safe_print(f"   [Kode Error] {err_reason}")
+                        if "quotaExceeded" in err_reason or "quota" in err_detail.lower():
+                            safe_print("\n   [PENTING] Kuota Harian YouTube API telah habis!")
+                            safe_print("   Cek detail kuota di (pastikan project-nya SESUAI dengan client_secrets.json):")
+                            safe_print("   https://console.cloud.google.com/apis/api/youtube.googleapis.com/quotas")
+                            safe_print("   Periksa apakah token.pickle & client_secrets.json dari project yang sama.")
+                            safe_print("   Jika kuota masih tersedia, coba hapus token.pickle dan login ulang.\n")
+                            try:
+                                safe_print(f"   [Debug] Full response: {json.dumps(err_body, indent=2)}")
+                            except Exception:
+                                pass
+                        elif status_code == 403:
+                            safe_print(f"\n   [PENTING] Akses ditolak YouTube API. Error: {err_reason or err_detail}")
+                            safe_print("   Ini mungkin bukan error kuota. Periksa apakah video melanggar kebijakan YouTube")
+                            safe_print("   atau channel Anda memiliki pembatasan tertentu.\n")
                         if status_code == 401:
                             safe_print("   [PENTING] Token OAuth tidak valid/expired. Hapus file token.pickle dan login ulang.\n")
+                        ada_error = True
                     except Exception as e:
                         err_type = type(e).__name__
                         err_msg = str(e) if str(e).strip() else "(pesan error kosong)"
                         safe_print(f"   [Gagal] {err_type}: {err_msg}")
                         safe_print(f"   [Debug] Traceback:\n{traceback.format_exc()[:500]}")
+                        ada_error = True
                         
     if counter_upload == 0:
-        safe_print(f"[Peringatan] Tidak ada file kecocokan video ditemukan untuk ID {target_video_id} di folder '{folder_clips}'.")
+        if ada_error:
+            safe_print(f"\n[Gagal] Semua upload gagal untuk Video ID {target_video_id}. Periksa log error di atas.")
+        else:
+            safe_print(f"[Peringatan] Tidak ada file cocok ditemukan untuk ID {target_video_id} di folder '{folder_clips}'.")
     else:
         safe_print(f"\n[Selesai] Total {counter_upload} video Shorts berhasil diunggah ke YouTube!")
+        if ada_error:
+            safe_print(f"[Info] {counter_upload} berhasil, namun beberapa momen gagal diupload.")
+    if ada_error:
+        sys.exit(1)
