@@ -71,6 +71,7 @@ def migrate_db():
         "status_download": "TEXT DEFAULT 'pending'",
         "status_potong": "TEXT DEFAULT 'pending'",
         "status_upload": "TEXT DEFAULT 'pending'",
+        "status_facebook": "TEXT DEFAULT 'pending'",
         "error_message": "TEXT"
     }
     
@@ -92,6 +93,10 @@ def migrate_db():
     if "waktu_selesai" not in cols_moments:
         print("[DB] Menambahkan kolom 'waktu_selesai' ke tabel moments...")
         cursor.execute("ALTER TABLE moments ADD COLUMN waktu_selesai TEXT")
+
+    if "is_uploaded_fb" not in cols_moments:
+        print("[DB] Menambahkan kolom 'is_uploaded_fb' ke tabel moments...")
+        cursor.execute("ALTER TABLE moments ADD COLUMN is_uploaded_fb INTEGER DEFAULT 0")
 
     # Buat tabel schedules jika belum ada
     cursor.execute('''
@@ -176,7 +181,7 @@ def db_cursor():
     finally:
         conn.close()
 
-VALID_COLUMNS = {"status_analisis", "status_download", "status_potong", "status_upload", "error_message", "judul_video", "channel_video"}
+VALID_COLUMNS = {"status_analisis", "status_download", "status_potong", "status_upload", "status_facebook", "error_message", "judul_video", "channel_video"}
 
 def update_video_status(video_id: int, **kwargs):
     """Mengupdate status kolom video di database secara cepat"""
@@ -291,6 +296,7 @@ def background_worker():
                     "download": "status_download",
                     "potong":   "status_potong",
                     "upload":   "status_upload",
+                    "facebook": "status_facebook",
                 }
 
                 success = True
@@ -309,6 +315,8 @@ def background_worker():
                         cmd = [sys.executable, "potong_video.py", str(video_id)]
                     elif current_stage == "upload":
                         cmd = [sys.executable, "upload_youtube.py", str(video_id)]
+                    elif current_stage == "facebook":
+                        cmd = [sys.executable, "upload_facebook.py", str(video_id)]
                         
                     # Eksekusi
                     stage_success = execute_subprocess_live(video_id, current_stage, cmd)
@@ -337,8 +345,8 @@ def background_worker():
                 print(f"[Worker Error] Video ID {video_id}: {error_msg}")
                 log_message(video_id, f"❌ [ERROR FATAL] {error_msg}")
                 # Jika ada error crash, reset semua status 'processing' kembali ke 'failed'
-                STAGE_COL = {"analisa": "status_analisis", "download": "status_download", "potong": "status_potong", "upload": "status_upload"}
-                for s in ["analisa", "download", "potong", "upload"]:
+                STAGE_COL = {"analisa": "status_analisis", "download": "status_download", "potong": "status_potong", "upload": "status_upload", "facebook": "status_facebook"}
+                for s in ["analisa", "download", "potong", "upload", "facebook"]:
                     try:
                         update_video_status(video_id, **{STAGE_COL[s]: "failed", "error_message": error_msg})
                     except Exception:
@@ -370,6 +378,9 @@ class ConfigUpdate(BaseModel):
     font_name: str
     font_size: str
     whisper_model: str
+    fb_page_id: str = ""
+    fb_page_token: str = ""
+    fb_privacy: str = "PUBLIC"
 
 class ScheduleInput(BaseModel):
     video_id: int
@@ -397,11 +408,13 @@ def startup_event():
             SET status_analisis = CASE WHEN status_analisis = 'processing' THEN 'failed' ELSE status_analisis END,
                 status_download  = CASE WHEN status_download  = 'processing' THEN 'failed' ELSE status_download  END,
                 status_potong    = CASE WHEN status_potong    = 'processing' THEN 'failed' ELSE status_potong    END,
-                status_upload    = CASE WHEN status_upload    = 'processing' THEN 'failed' ELSE status_upload    END
+                status_upload    = CASE WHEN status_upload    = 'processing' THEN 'failed' ELSE status_upload    END,
+                status_facebook  = CASE WHEN status_facebook  = 'processing' THEN 'failed' ELSE status_facebook  END
             WHERE status_analisis = 'processing'
                OR status_download  = 'processing'
                OR status_potong    = 'processing'
                OR status_upload    = 'processing'
+               OR status_facebook  = 'processing'
         """)
         affected = cursor.rowcount
         conn.commit()
@@ -426,11 +439,13 @@ def startup_event():
                     SET status_analisis = CASE WHEN status_analisis = 'processing' THEN 'failed' ELSE status_analisis END,
                         status_download  = CASE WHEN status_download  = 'processing' THEN 'failed' ELSE status_download  END,
                         status_potong    = CASE WHEN status_potong    = 'processing' THEN 'failed' ELSE status_potong    END,
-                        status_upload    = CASE WHEN status_upload    = 'processing' THEN 'failed' ELSE status_upload    END
+                        status_upload    = CASE WHEN status_upload    = 'processing' THEN 'failed' ELSE status_upload    END,
+                        status_facebook  = CASE WHEN status_facebook  = 'processing' THEN 'failed' ELSE status_facebook  END
                     WHERE status_analisis = 'processing'
                        OR status_download  = 'processing'
                        OR status_potong    = 'processing'
                        OR status_upload    = 'processing'
+                       OR status_facebook  = 'processing'
                 """)
                 affected = cursor.rowcount
                 conn.commit()
@@ -543,6 +558,7 @@ def get_moments(video_id: int):
         path_clip = os.path.join("clips_output", file_clip_name)
         m["has_clip"] = os.path.exists(path_clip)
         m["clip_url"] = f"/clips/{file_clip_name}" if m["has_clip"] else None
+        m["is_uploaded_fb"] = m.get("is_uploaded_fb", 0)
         moments.append(m)
         
     return moments
@@ -566,7 +582,7 @@ def update_moment(moment_id: int, payload: MomentUpdate):
 @app.post("/api/process/{video_id}/{stage}")
 def trigger_stage(video_id: int, stage: str):
     """Memicu proses manual per tahap (analisa, download, potong, upload)"""
-    if stage not in ["analisa", "download", "potong", "upload", "all"]:
+    if stage not in ["analisa", "download", "potong", "upload", "facebook", "all"]:
         raise HTTPException(status_code=400, detail="Tahapan proses tidak dikenal.")
         
     # Tambahkan tugas ke antrean latar belakang
@@ -579,6 +595,7 @@ def trigger_stage(video_id: int, stage: str):
         "download": "status_download",
         "potong":   "status_potong",
         "upload":   "status_upload",
+        "facebook": "status_facebook",
     }
     if stage != "all":
         update_video_status(video_id, **{STAGE_COL[stage]: "processing"})
@@ -605,6 +622,11 @@ DEFAULT_CONFIG = {
         "align": "2",
         "margin_v": "100",
         "margin_h": "0"
+    },
+    "facebook": {
+        "page_id": "",
+        "page_access_token": "",
+        "privacy": "PUBLIC"
     }
 }
 
@@ -631,11 +653,17 @@ def get_config():
 
     app_cfg = load_app_config()
     caption = app_cfg.get("caption", DEFAULT_CONFIG["caption"])
+    facebook = app_cfg.get("facebook", DEFAULT_CONFIG["facebook"])
     has_youtube_auth = os.path.exists("token.pickle")
 
     masked_key = ""
     if len(gemini_key) > 10:
         masked_key = gemini_key[:6] + "****" + gemini_key[-4:]
+
+    fb_token = facebook.get("page_access_token", "")
+    masked_fb_token = ""
+    if len(fb_token) > 10:
+        masked_fb_token = fb_token[:6] + "****" + fb_token[-4:]
 
     return {
         "gemini_key": masked_key,
@@ -643,7 +671,10 @@ def get_config():
         "font_name": caption.get("font_name", "Cooper Black"),
         "font_size": caption.get("font_size", "6"),
         "whisper_model": caption.get("model", "small"),
-        "has_youtube_auth": has_youtube_auth
+        "has_youtube_auth": has_youtube_auth,
+        "fb_page_id": facebook.get("page_id", ""),
+        "fb_page_token": masked_fb_token,
+        "fb_privacy": facebook.get("privacy", "PUBLIC")
     }
 
 @app.post("/api/config")
@@ -666,9 +697,18 @@ def update_config(payload: ConfigUpdate):
             "margin_v": app_cfg.get("caption", {}).get("margin_v", "100"),
             "margin_h": app_cfg.get("caption", {}).get("margin_h", "0")
         }
+        old_fb = app_cfg.get("facebook", {})
+        new_token = payload.fb_page_token.strip()
+        if "****" in new_token or not new_token:
+            new_token = old_fb.get("page_access_token", "")
+        app_cfg["facebook"] = {
+            "page_id": payload.fb_page_id.strip(),
+            "page_access_token": new_token,
+            "privacy": payload.fb_privacy
+        }
         with open(CONFIG_FILE, "w") as f:
             json.dump(app_cfg, f, indent=2)
-        log_message(None, "Pengaturan caption diperbarui di config.json.")
+        log_message(None, "Pengaturan diperbarui di config.json.")
     except Exception as e:
         log_message(None, f"[Warning] Gagal mengupdate config.json: {e}")
 

@@ -210,6 +210,7 @@
                                         <span class="dbadge" id="dbadgeDownload">📥 Download</span>
                                         <span class="dbadge" id="dbadgePotong">✂️ Potong</span>
                                         <span class="dbadge" id="dbadgeUpload">📤 Upload</span>
+                                        <span class="dbadge" id="dbadgeFacebook">📘 Facebook</span>
                                     </div>
                                 </div>
                             </div>
@@ -256,6 +257,14 @@
                                         <div class="ps-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
                                         <div class="ps-label">Upload</div>
                                         <button class="ps-btn" id="btnUpload" title="Upload ke YouTube">
+                                            <i class="fa-solid fa-play"></i>
+                                        </button>
+                                    </div>
+                                    <div class="ps-line" id="psLine4"></div>
+                                    <div class="ps-step" id="psFacebook">
+                                        <div class="ps-icon"><i class="fa-brands fa-facebook"></i></div>
+                                        <div class="ps-label">Facebook</div>
+                                        <button class="ps-btn" id="btnFacebook" title="Upload Reels ke Facebook">
                                             <i class="fa-solid fa-play"></i>
                                         </button>
                                     </div>
@@ -344,6 +353,7 @@
                                 <option value="download">📥 Download Video</option>
                                 <option value="potong">✂️ Potong Video</option>
                                 <option value="upload">📤 Upload YouTube</option>
+                                <option value="facebook">📘 Upload Facebook Reels</option>
                             </select>
                         </div>
                         <div class="form-row-2">
@@ -446,6 +456,33 @@
                         <div class="form-group">
                             <label>Ukuran Font (ASS)</label>
                             <input type="text" id="fontSize" placeholder="6" style="max-width: 120px;">
+                        </div>
+                        <div class="divider"></div>
+                        <div class="card-head" style="padding: 0 0 12px 0; border: none;">
+                            <h2><i class="fa-brands fa-facebook"></i> Facebook Reels</h2>
+                        </div>
+                        <div class="form-group">
+                            <label>Page ID</label>
+                            <input type="text" id="fbPageId" placeholder="1234567890">
+                            <span class="form-hint">ID Halaman Facebook Anda (lihat di About > Page Info)</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Page Access Token</label>
+                            <div class="input-with-action">
+                                <input type="password" id="fbPageToken" placeholder="EAAG...">
+                                <button type="button" class="btn-icon-sm" id="toggleFbToken">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                            <span class="form-hint">Dari Meta Developer > Tools > Graph API Explorer</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Privacy</label>
+                            <select id="fbPrivacy">
+                                <option value="PUBLIC">Public</option>
+                                <option value="FRIENDS">Friends</option>
+                                <option value="ONLY_ME">Only Me</option>
+                            </select>
                         </div>
                         <div class="form-actions">
                             <button type="submit" class="btn btn-primary">

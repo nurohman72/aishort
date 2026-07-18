@@ -348,7 +348,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function updateStats() {
         let processing = 0, completed = 0, failed = 0;
         videos.forEach(v => {
-            const stages = [v.status_analisis, v.status_download, v.status_potong, v.status_upload];
+            const stages = [v.status_analisis, v.status_download, v.status_potong, v.status_upload, v.status_facebook];
             if (stages.includes("processing")) processing++;
             if (v.status_upload === "success") completed++;
             if (stages.includes("failed")) failed++;
@@ -382,6 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <span class="sbadge ${v.status_download}">📥 ${v.status_download}</span>
                     <span class="sbadge ${v.status_potong}">✂️ ${v.status_potong}</span>
                     <span class="sbadge ${v.status_upload}">📤 ${v.status_upload}</span>
+                    <span class="sbadge ${v.status_facebook}">📘 ${v.status_facebook}</span>
                 </div>
             </div>
             <button class="vr-del" data-id="${v.id}" title="Hapus"><i class="fa-solid fa-trash-can"></i></button>
@@ -558,15 +559,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updatePipelineUI(v) {
-        const stages = ["analisa", "download", "potong", "upload"];
+        const stages = ["analisa", "download", "potong", "upload", "facebook"];
         const statusMap = {
             analisa:  v.status_analisis,
             download: v.status_download,
             potong:   v.status_potong,
-            upload:   v.status_upload
+            upload:   v.status_upload,
+            facebook: v.status_facebook
         };
 
-        // Hanya disable tombol stage yang SEDANG processing, bukan semua tombol
         const anyProcessing = Object.values(statusMap).includes("processing");
 
         stages.forEach((s, i) => {
@@ -581,23 +582,22 @@ document.addEventListener("DOMContentLoaded", () => {
                     stepEl.querySelector(".ps-icon").innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
                 } else {
                     const icons = { analisa: "fa-magnifying-glass", download: "fa-download",
-                                    potong: "fa-scissors", upload: "fa-cloud-arrow-up" };
-                    stepEl.querySelector(".ps-icon").innerHTML = `<i class="fa-solid ${icons[s]}"></i>`;
+                                    potong: "fa-scissors", upload: "fa-cloud-arrow-up", facebook: "fa-facebook" };
+                    const brands = { facebook: "fa-brands" };
+                    const prefix = brands[s] ? `${brands[s]} ` : "fa-solid ";
+                    stepEl.querySelector(".ps-icon").innerHTML = `<i class="${prefix}${icons[s]}"></i>`;
                 }
             }
 
-            // Disable hanya tombol stage yang sedang processing itu sendiri
-            // Stage lain tetap bisa diklik (misal: potong bisa diulang meski download sudah success)
             if (btnEl) btnEl.disabled = (status === "processing");
 
             if (dbadge) {
                 dbadge.className = `dbadge ${status || "pending"}`;
                 const labels = { analisa: "🔍 Analisa", download: "📥 Download",
-                                 potong: "✂️ Potong", upload: "📤 Upload" };
+                                 potong: "✂️ Potong", upload: "📤 Upload", facebook: "📘 Facebook" };
                 dbadge.textContent = `${labels[s]}: ${status || "pending"}`;
             }
 
-            // Update connector lines
             if (i < stages.length - 1) {
                 const line = document.getElementById(`psLine${i + 1}`);
                 if (line) {
@@ -608,7 +608,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
 
-        // All-in-One hanya disable jika ada stage yang sedang berjalan
         document.getElementById("btnRunAll").disabled = anyProcessing;
     }
 
@@ -668,6 +667,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById("btnUpload").addEventListener("click", () => {
         handlePipelineClick("upload");
+    });
+
+    document.getElementById("btnFacebook").addEventListener("click", () => {
+        handlePipelineClick("facebook");
     });
 
     document.getElementById("btnResetStatus").addEventListener("click", async () => {
@@ -753,6 +756,7 @@ document.addEventListener("DOMContentLoaded", () => {
             let statusHtml = `<span class="mi-status">⏳ Antrean</span>`;
             if (m.is_uploaded === 1) statusHtml = `<span class="mi-status uploaded"><i class="fa-solid fa-circle-check"></i> Sudah Diupload</span>`;
             else if (m.has_clip)     statusHtml = `<span class="mi-status clipped"><i class="fa-solid fa-scissors"></i> Sudah Dipotong</span>`;
+            const fbBadge = m.is_uploaded_fb === 1 ? `<span class="mi-status uploaded"><i class="fa-brands fa-facebook"></i> FB Uploaded</span>` : "";
 
             const previewBtn = m.has_clip
                 ? `<button class="btn btn-xs btn-accent btn-play" data-id="${m.id}" data-title="${escHtml(m.judul_menarik)}">
@@ -778,6 +782,7 @@ document.addEventListener("DOMContentLoaded", () => {
                        value="${escHtml(m.hashtag_terbaik || "")}" placeholder="#hashtag #viral">
                 <div class="mi-footer">
                     ${statusHtml}
+                    ${fbBadge}
                     ${previewBtn}
                 </div>
             </div>`;
@@ -983,6 +988,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const fs = document.getElementById("fontSize");
             if (fs) fs.value = config.font_size || "6";
 
+            const fpid = document.getElementById("fbPageId");
+            if (fpid) fpid.value = config.fb_page_id || "";
+            const fpt = document.getElementById("fbPageToken");
+            if (fpt) fpt.value = config.fb_page_token || "";
+            const fpv = document.getElementById("fbPrivacy");
+            if (fpv) fpv.value = config.fb_privacy || "PUBLIC";
+
             // OAuth indicator in settings
             const oauthInd = document.getElementById("oauthIndicator");
             const oauthText = document.getElementById("oauthStatusText");
@@ -1006,7 +1018,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     enable_caption: document.getElementById("enableCaption").checked,
                     font_name: document.getElementById("fontName").value.trim() || "Cooper Black",
                     font_size: document.getElementById("fontSize").value.trim() || "6",
-                    whisper_model: document.getElementById("whisperModel").value
+                    whisper_model: document.getElementById("whisperModel").value,
+                    fb_page_id: document.getElementById("fbPageId").value.trim(),
+                    fb_page_token: document.getElementById("fbPageToken").value.trim(),
+                    fb_privacy: document.getElementById("fbPrivacy").value
                 })
             });
             if (!res.ok) throw new Error();
@@ -1018,6 +1033,18 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("toggleKey")?.addEventListener("click", () => {
         const inp = document.getElementById("geminiKey");
         const icon = document.querySelector("#toggleKey i");
+        if (inp.type === "password") {
+            inp.type = "text";
+            icon.className = "fa-solid fa-eye-slash";
+        } else {
+            inp.type = "password";
+            icon.className = "fa-solid fa-eye";
+        }
+    });
+
+    document.getElementById("toggleFbToken")?.addEventListener("click", () => {
+        const inp = document.getElementById("fbPageToken");
+        const icon = document.querySelector("#toggleFbToken i");
         if (inp.type === "password") {
             inp.type = "text";
             icon.className = "fa-solid fa-eye-slash";

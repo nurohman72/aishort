@@ -2,14 +2,14 @@
 
 ## Project Overview
 
-NurClipper is a web-based automation platform that transforms long YouTube videos/podcasts into YouTube Shorts (9:16 vertical, max 59s). Pipeline: **Input URL → Analisa AI (Gemini) → Download (yt-dlp) → Potong (FFmpeg) → Upload (YouTube API)**.
+NurClipper is a web-based automation platform that transforms long YouTube videos/podcasts into YouTube Shorts (9:16 vertical, max 59s) and uploads them to YouTube and Facebook Reels. Pipeline: **Input URL → Analisa AI (Gemini) → Download (yt-dlp) → Potong (FFmpeg) → Upload (YouTube API) / Facebook Reels API**.
 
 ## Tech Stack
 
 - **Backend:** Python 3.13, FastAPI, Uvicorn, SQLite, Pydantic, SSE-Starlette
 - **Frontend:** Vanilla JS SPA, HTML5, CSS3 (CSS variables, glassmorphism, dark/light themes)
 - **AI/Video:** Google Gemini 2.5 Flash, yt-dlp, FFmpeg, OpenAI Whisper (PyTorch)
-- **Auth:** Google OAuth, YouTube Data API v3
+- **Auth:** Google OAuth, YouTube Data API v3, Facebook Graph API v19.0 (Page Access Token)
 
 ## Development Commands
 
@@ -21,6 +21,7 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 | `python download_youtube.py <URL>` | Download video standalone |
 | `python potong_video.py <VIDEO_ID>` | Cut clips standalone |
 | `python upload_youtube.py <VIDEO_ID>` | Upload clips standalone |
+| `python upload_facebook.py <VIDEO_ID>` | Upload Reels to Facebook standalone |
 
 ## Key Conventions
 
@@ -41,15 +42,16 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 - **File:** `database_konten.db` (SQLite)
 - **WAL mode** enabled for better concurrent read/write
 - **Indexes:** `idx_moments_video_id`, `idx_moments_selected`, `idx_schedules_pending`
-- **Table `videos`:** id, url, judul_video, channel_video, tanggal_analisis, status_analisis, status_download, status_potong, status_upload, error_message
-- **Table `moments`:** id, video_id (FK), waktu_start, waktu_selesai, judul_menarik, hashtag_terbaik, deskripsi_pendek, is_uploaded, is_selected
+- **Table `videos`:** id, url, judul_video, channel_video, tanggal_analisis, status_analisis, status_download, status_potong, status_upload, status_facebook, error_message
+- **Table `moments`:** id, video_id (FK), waktu_start, waktu_selesai, judul_menarik, hashtag_terbaik, deskripsi_pendek, is_uploaded, is_uploaded_fb, is_selected
 - **Table `schedules`:** id, video_id (FK), stage, scheduled_at, repeat (once/daily/weekly), status, last_run, created_at
 - Status values: `pending`, `processing`, `success`, `failed`
 
 ### Environment & Config
 - API key in `environment.txt`: `GEMINI_API_KEY=...`
-- App config in `config.json`: caption settings (model, font, size, etc.)
+- App config in `config.json`: caption settings (model, font, size, etc.), Facebook settings (page_id, page_access_token, privacy)
 - YouTube OAuth: `client_secrets.json` + `token.pickle` (auto-refresh)
+- Facebook: Page Access Token from Graph API Explorer, no OAuth flow needed
 - FFmpeg must be in PATH or in project root
 - Output dirs: `videos_podcast/`, `clips_output/`
 
@@ -70,6 +72,7 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 | `download_youtube.py` | yt-dlp downloader |
 | `potong_video.py` | FFmpeg cutting + captioning |
 | `upload_youtube.py` | YouTube Data API uploader (268 lines) |
+| `upload_facebook.py` | Facebook Reels uploader (Page Access Token, Graph API) |
 | `autocaption.py` | Whisper subtitle pipeline |
 | `web_static/app.js` | Frontend SPA logic (943 lines) |
 | `web_static/style.css` | Design system (~1337 lines) |
