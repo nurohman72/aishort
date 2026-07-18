@@ -12,10 +12,21 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
 from yt_dlp import YoutubeDL
 
+import re
+
 def unduh_video_youtube(url_video, folder_tujuan="downloads"):
     if not os.path.exists(folder_tujuan):
         os.makedirs(folder_tujuan)
         print(f"Membuat folder baru: '{folder_tujuan}'")
+
+    yt_id_match = re.search(r'(?:v=|\/shorts\/|\/embed\/|\/v\/|youtu\.be\/|\/videos\/)([a-zA-Z0-9_-]{11})', url_video)
+    yt_id = yt_id_match.group(1) if yt_id_match else None
+    if yt_id:
+        existing = os.path.join(folder_tujuan, f"{yt_id}.mp4")
+        if os.path.exists(existing):
+            print(f"[Info] File sudah ada: {existing}. Skip download.", flush=True)
+            print("PROGRESS_DOWNLOAD|100.0|—|—|—", flush=True)
+            return
 
     def progress_hook(d):
         if d['status'] == 'downloading':

@@ -39,6 +39,8 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 
 ### Database
 - **File:** `database_konten.db` (SQLite)
+- **WAL mode** enabled for better concurrent read/write
+- **Indexes:** `idx_moments_video_id`, `idx_moments_selected`, `idx_schedules_pending`
 - **Table `videos`:** id, url, judul_video, channel_video, tanggal_analisis, status_analisis, status_download, status_potong, status_upload, error_message
 - **Table `moments`:** id, video_id (FK), waktu_start, waktu_selesai, judul_menarik, hashtag_terbaik, deskripsi_pendek, is_uploaded, is_selected
 - **Table `schedules`:** id, video_id (FK), stage, scheduled_at, repeat (once/daily/weekly), status, last_run, created_at
@@ -46,6 +48,7 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 
 ### Environment & Config
 - API key in `environment.txt`: `GEMINI_API_KEY=...`
+- App config in `config.json`: caption settings (model, font, size, etc.)
 - YouTube OAuth: `client_secrets.json` + `token.pickle` (auto-refresh)
 - FFmpeg must be in PATH or in project root
 - Output dirs: `videos_podcast/`, `clips_output/`
@@ -61,7 +64,8 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 
 | File | Purpose |
 |---|---|---|
-| `web_server.py` | Main entry point (847 lines) |
+| `web_server.py` | Main entry point (900+ lines) |
+| `config.json` | App config (caption settings, etc.) |
 | `analisa_youtube.py` | AI analysis with Gemini |
 | `download_youtube.py` | yt-dlp downloader |
 | `potong_video.py` | FFmpeg cutting + captioning |

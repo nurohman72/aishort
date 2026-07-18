@@ -33,14 +33,36 @@ def cek_ffmpeg():
         print("[Error] FFmpeg tidak ditemukan! Pastikan FFmpeg terinstal dan tersedia di PATH.")
         sys.exit(1)
 
-# --- Parameter Auto-Captioning ---
-ENABLE_AUTOCAPTION = True
-AUTOCAPTION_MODEL = "small"
-AUTOCAPTION_FONT = "Cooper Black"
-AUTOCAPTION_FONTSIZE = "6"
-AUTOCAPTION_ALIGN = "2"
-AUTOCAPTION_MARGIN_V = "100"
-AUTOCAPTION_MARGIN_H = "0"
+CONFIG_FILE = "config.json"
+DEFAULT_CAPTION = {
+    "enabled": True,
+    "model": "small",
+    "font_name": "Cooper Black",
+    "font_size": "6",
+    "align": "2",
+    "margin_v": "100",
+    "margin_h": "0"
+}
+
+def load_caption_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            import json
+            with open(CONFIG_FILE, "r") as f:
+                cfg = json.load(f)
+            return cfg.get("caption", DEFAULT_CAPTION)
+        except Exception:
+            pass
+    return DEFAULT_CAPTION.copy()
+
+_caption_cfg = load_caption_config()
+ENABLE_AUTOCAPTION = _caption_cfg.get("enabled", True)
+AUTOCAPTION_MODEL = _caption_cfg.get("model", "small")
+AUTOCAPTION_FONT = _caption_cfg.get("font_name", "Cooper Black")
+AUTOCAPTION_FONTSIZE = _caption_cfg.get("font_size", "6")
+AUTOCAPTION_ALIGN = _caption_cfg.get("align", "2")
+AUTOCAPTION_MARGIN_V = _caption_cfg.get("margin_v", "100")
+AUTOCAPTION_MARGIN_H = _caption_cfg.get("margin_h", "0")
 
 def dapatkan_data_momen(video_id):
     """Mengambil data URL video dan daftar momen berdasarkan ID Video dari SQLite"""

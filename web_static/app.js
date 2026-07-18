@@ -229,7 +229,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             } catch {}
         };
-        logSSE.onerror = () => {};
+        logSSE.onerror = () => {
+            logSSE.close();
+            setTimeout(() => setupSSE(), 3000);
+        };
     }
 
     btnClearLog.addEventListener("click", () => {
@@ -294,7 +297,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (page === "schedule") { fetchSchedules(); populateScheduleVideoSelect(); }
         if (page === "settings") fetchConfig();
-        if (page === "queue")    renderVideoListFull();
+        if (page === "queue")    { fetchVideos(); }
     }
 
     document.querySelectorAll(".nav-item").forEach(item => {
@@ -336,6 +339,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         } catch (e) {
             console.error("fetchVideos error", e);
+            toast("error", "Gagal memuat data video");
         } finally {
             if (showSync && syncEl) syncEl.classList.add("hidden");
         }
@@ -364,12 +368,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const ytId = extractYtId(v.url);
         const thumb = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
         const isActive = selectedVideoId === v.id ? "active" : "";
+        const title = escAttr(v.judul_video || v.url);
+        const channel = escHtml(v.channel_video || "—");
+        const displayTitle = escHtml(v.judul_video || v.url);
         return `
         <div class="video-row ${isActive}" data-id="${v.id}">
             <img class="vr-thumb" src="${thumb}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2280%22 height=%2246%22><rect fill=%22%23222%22 width=%2280%22 height=%2246%22/></svg>'">
             <div class="vr-info">
-                <div class="vr-channel">${v.channel_video || "—"}</div>
-                <div class="vr-title" title="${v.judul_video || v.url}">${v.judul_video || v.url}</div>
+                <div class="vr-channel">${channel}</div>
+                <div class="vr-title" title="${title}">${displayTitle}</div>
                 <div class="vr-stages">
                     <span class="sbadge ${v.status_analisis}">🔍 ${v.status_analisis}</span>
                     <span class="sbadge ${v.status_download}">📥 ${v.status_download}</span>
@@ -803,6 +810,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return (str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     }
 
+    function escAttr(str) {
+        return (str || "").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
     async function saveMoment(momentId, field, value) {
         const m = moments.find(m => m.id === momentId);
         if (!m) return;
@@ -852,7 +863,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 schedules.filter(s => s.status === "pending").length;
             document.getElementById("statScheduled").textContent =
                 schedules.filter(s => s.status === "pending").length;
-        } catch { console.error("fetchSchedules error"); }
+        } catch { console.error("fetchSchedules error"); toast("error", "Gagal memuat jadwal"); }
     }
 
     function renderSchedules() {
@@ -979,7 +990,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 oauthInd.querySelector(".dot").className = `dot ${connected ? "dot-green" : "dot-red"}`;
                 oauthText.textContent = connected ? "Terhubung ke YouTube" : "Belum terhubung";
             }
-        } catch { console.error("fetchConfig error"); }
+        } catch { console.error("fetchConfig error"); toast("error", "Gagal memuat pengaturan"); }
     }
 
     document.getElementById("settingsForm")?.addEventListener("submit", async (e) => {
@@ -1031,21 +1042,6 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btnYoutubeAuthSettings")?.addEventListener("click", triggerYoutubeAuth);
 
     // ==========================================
-    // STOP SERVER
-    // ==========================================
-    document.getElementById("btnStopServer")?.addEventListener("click", async () => {
-        const ok = await confirm("Stop Server?", "Server web akan dimatikan. Anda harus menjalankan ulang server secara manual untuk mengakses kembali.");
-        if (!ok) return;
-        try {
-            await fetch("/api/shutdown", { method: "POST" });
-            toast("warning", "Server dimatikan", "Jendela ini tidak akan bisa digunakan lagi.");
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px;color:var(--text-2)"><i class="fa-solid fa-power-off" style="font-size:48px;color:var(--danger)"></i><h2>Server Dimatikan</h2><p>Jalankan ulang server untuk mengakses kembali.</p></div>';
-        } catch {
-            toast("error", "Gagal mematikan server");
-        }
-    });
-
-    // ==========================================
     // THEME SWITCHER
     // ==========================================
     // Load tema dari localStorage saat init
@@ -1085,8 +1081,6 @@ document.addEventListener("DOMContentLoaded", () => {
         fetchVideos(true);
         fetchSchedules();
         setupSSE();
-        setInterval(() => fetchVideos(false), 4000);
-        setInterval(() => fetchSchedules(), 30000);
     }
 
     init();

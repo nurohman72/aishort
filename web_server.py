@@ -22,7 +22,7 @@ app = FastAPI(title="Nurohman Clipper Web API", version="1.0.0")
 # Aktifkan CORS agar frontend dapat berkomunikasi dengan lancar jika dikembangkan terpisah
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,6 +34,8 @@ DB_FILE = "database_konten.db"
 def migrate_db():
     print("[DB] Menjalankan inisialisasi dan migrasi database...")
     conn = sqlite3.connect(DB_FILE)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     cursor = conn.cursor()
     
     # Buat tabel utama jika belum ada
@@ -105,6 +107,10 @@ def migrate_db():
             FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE
         )
     ''')
+    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_moments_video_id ON moments(video_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_moments_selected ON moments(video_id, is_selected)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_schedules_pending ON schedules(status, scheduled_at)")
         
     conn.commit()
     conn.close()
@@ -440,25 +446,21 @@ def startup_event():
 
 @app.get("/api/videos")
 def get_videos():
-    """Mengambil daftar video di database diurutkan berdasarkan tanggal terbaru dengan SQLite JOIN tunggal"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT v.*, 
-               COUNT(m.id) as total_moments, 
-               SUM(CASE WHEN m.is_uploaded = 1 THEN 1 ELSE 0 END) as uploaded_moments
-        FROM videos v
-        LEFT JOIN moments m ON m.video_id = v.id
-        GROUP BY v.id
-        ORDER BY v.id DESC
-    """)
-    rows = cursor.fetchall()
-    conn.close()
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT v.*, 
+                   COUNT(m.id) as total_moments, 
+                   SUM(CASE WHEN m.is_uploaded = 1 THEN 1 ELSE 0 END) as uploaded_moments
+            FROM videos v
+            LEFT JOIN moments m ON m.video_id = v.id
+            GROUP BY v.id
+            ORDER BY v.id DESC
+        """)
+        rows = cursor.fetchall()
     
     videos = []
     for r in rows:
         v = dict(r)
-        # Tangani nilai null dari aggregation
         v["total_moments"] = v["total_moments"] if v["total_moments"] else 0
         v["uploaded_moments"] = v["uploaded_moments"] if v["uploaded_moments"] else 0
         videos.append(v)
@@ -530,17 +532,13 @@ def delete_video(video_id: int):
 
 @app.get("/api/moments/{video_id}")
 def get_moments(video_id: int):
-    """Mengambil daftar momen hasil analisa Gemini untuk video tertentu"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM moments WHERE video_id = ? ORDER BY id ASC", (video_id,))
-    rows = cursor.fetchall()
-    conn.close()
+    with db_cursor() as cursor:
+        cursor.execute("SELECT * FROM moments WHERE video_id = ? ORDER BY id ASC", (video_id,))
+        rows = cursor.fetchall()
     
     moments = []
     for r in rows:
         m = dict(r)
-        # Tambahkan path video hasil potong jika sudah ada di folder clips_output
         file_clip_name = f"{video_id}_{m['id']}.mp4"
         path_clip = os.path.join("clips_output", file_clip_name)
         m["has_clip"] = os.path.exists(path_clip)
@@ -596,10 +594,31 @@ def trigger_stage(video_id: int, stage: str):
 
 # ----------------- CONFIGURATION MANAGEMENT -----------------
 ENV_FILE = "environment.txt"
+CONFIG_FILE = "config.json"
+
+DEFAULT_CONFIG = {
+    "caption": {
+        "enabled": True,
+        "model": "small",
+        "font_name": "Cooper Black",
+        "font_size": "6",
+        "align": "2",
+        "margin_v": "100",
+        "margin_h": "0"
+    }
+}
+
+def load_app_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[Config] Gagal baca config.json: {e}")
+    return DEFAULT_CONFIG.copy()
 
 @app.get("/api/config")
 def get_config():
-    """Membaca pengaturan/konfigurasi aplikasi dari environment.txt dan script default"""
     gemini_key = ""
     if os.path.exists(ENV_FILE):
         try:
@@ -609,78 +628,50 @@ def get_config():
                         gemini_key = line.replace("GEMINI_API_KEY=", "").strip()
         except Exception as e:
             print(f"Gagal baca config: {e}")
-            
-    # Baca setingan caption dari potong_video.py secara dinamis jika memungkinkan
-    # Kita berikan nilai fallback default yang sesuai dengan file potong_video.py Anda
-    enable_caption = True
-    font_name = "Cooper Black"
-    font_size = "6"
-    whisper_model = "medium"
-    
-    # Cek file potong_video.py untuk membaca variabel terkininya
-    if os.path.exists("potong_video.py"):
-        try:
-            with open("potong_video.py", "r") as f:
-                for line in f:
-                    if "ENABLE_AUTOCAPTION =" in line:
-                        enable_caption = ("True" in line)
-                    elif "AUTOCAPTION_FONT =" in line:
-                        font_name = line.split("=")[1].replace('"', '').replace("'", "").strip()
-                    elif "AUTOCAPTION_FONTSIZE =" in line:
-                        font_size = line.split("=")[1].replace('"', '').replace("'", "").strip()
-                    elif "AUTOCAPTION_MODEL =" in line:
-                        whisper_model = line.split("=")[1].replace('"', '').replace("'", "").strip()
-        except Exception as e:
-            print(f"Peringatan membaca config dari potong_video.py: {e}")
-            
-    # Cek YouTube OAuth token.pickle status
+
+    app_cfg = load_app_config()
+    caption = app_cfg.get("caption", DEFAULT_CONFIG["caption"])
     has_youtube_auth = os.path.exists("token.pickle")
-    
+
+    masked_key = ""
+    if len(gemini_key) > 10:
+        masked_key = gemini_key[:6] + "****" + gemini_key[-4:]
+
     return {
-        "gemini_key": gemini_key,
-        "enable_caption": enable_caption,
-        "font_name": font_name,
-        "font_size": font_size,
-        "whisper_model": whisper_model,
+        "gemini_key": masked_key,
+        "enable_caption": caption.get("enabled", True),
+        "font_name": caption.get("font_name", "Cooper Black"),
+        "font_size": caption.get("font_size", "6"),
+        "whisper_model": caption.get("model", "small"),
         "has_youtube_auth": has_youtube_auth
     }
 
 @app.post("/api/config")
 def update_config(payload: ConfigUpdate):
-    """Menyimpan Gemini API key ke environment.txt dan memperbarui setingan di potong_video.py"""
-    # 1. Simpan Gemini API Key
     try:
         with open(ENV_FILE, "w") as f:
             f.write(f"GEMINI_API_KEY={payload.gemini_key.strip()}\n")
-        log_message(None, "⚙️ Gemini API Key berhasil diperbarui di environment.txt.")
+        log_message(None, "Gemini API Key berhasil diperbarui di environment.txt.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal menulis environment.txt: {e}")
-        
-    # 2. Perbarui variabel di potong_video.py
-    if os.path.exists("potong_video.py"):
-        try:
-            with open("potong_video.py", "r") as f:
-                lines = f.readlines()
-                
-            new_lines = []
-            for line in lines:
-                if line.startswith("ENABLE_AUTOCAPTION ="):
-                    new_lines.append(f"ENABLE_AUTOCAPTION = {payload.enable_caption}\n")
-                elif line.startswith("AUTOCAPTION_FONT ="):
-                    new_lines.append(f"AUTOCAPTION_FONT = \"{payload.font_name}\"\n")
-                elif line.startswith("AUTOCAPTION_FONTSIZE ="):
-                    new_lines.append(f"AUTOCAPTION_FONTSIZE = \"{payload.font_size}\"\n")
-                elif line.startswith("AUTOCAPTION_MODEL ="):
-                    new_lines.append(f"AUTOCAPTION_MODEL = \"{payload.whisper_model}\"\n")
-                else:
-                    new_lines.append(line)
-                    
-            with open("potong_video.py", "w") as f:
-                f.writelines(new_lines)
-            log_message(None, "⚙️ Pengaturan video caption diperbarui di potong_video.py.")
-        except Exception as e:
-            log_message(None, f"[Warning] Gagal mengupdate potong_video.py: {e}")
-            
+
+    try:
+        app_cfg = load_app_config()
+        app_cfg["caption"] = {
+            "enabled": payload.enable_caption,
+            "model": payload.whisper_model,
+            "font_name": payload.font_name,
+            "font_size": payload.font_size,
+            "align": app_cfg.get("caption", {}).get("align", "2"),
+            "margin_v": app_cfg.get("caption", {}).get("margin_v", "100"),
+            "margin_h": app_cfg.get("caption", {}).get("margin_h", "0")
+        }
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(app_cfg, f, indent=2)
+        log_message(None, "Pengaturan caption diperbarui di config.json.")
+    except Exception as e:
+        log_message(None, f"[Warning] Gagal mengupdate config.json: {e}")
+
     return {"success": True}
 
 @app.post("/api/youtube-auth")
@@ -806,16 +797,14 @@ def run_scheduler():
 @app.get("/api/schedules")
 def get_schedules():
     """Mengambil semua jadwal yang ada"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT s.*, v.judul_video, v.channel_video
-        FROM schedules s
-        LEFT JOIN videos v ON v.id = s.video_id
-        ORDER BY s.scheduled_at ASC
-    """)
-    rows = cursor.fetchall()
-    conn.close()
+    with db_cursor() as cursor:
+        cursor.execute("""
+            SELECT s.*, v.judul_video, v.channel_video
+            FROM schedules s
+            LEFT JOIN videos v ON v.id = s.video_id
+            ORDER BY s.scheduled_at ASC
+        """)
+        rows = cursor.fetchall()
     return [dict(r) for r in rows]
 
 

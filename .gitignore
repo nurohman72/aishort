@@ -11,6 +11,7 @@ token.pickle
 temp_req.txt
 cookies.txt
 database_konten.db
+config.json
 *.db
 *.pickle
 *.log
