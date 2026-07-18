@@ -39,7 +39,19 @@ url_video = sys.argv[1]
 class MomentTerbaik(BaseModel):
     waktu_start: str = Field(
         description="Waktu TEPAT awal momen dalam format hh:mm:ss (contoh: '00:08:04'). "
-                    "Harus sesuai dengan awal kalimat di transkrip, bukan di tengah kalimat."
+                    "HARUS persis sama dengan timestamp yang ADA di transkrip. "
+                    "Harus sesuai dengan AWAL kalimat di transkrip, bukan di tengah kalimat."
+    )
+    waktu_selesai: str = Field(
+        description="Waktu AKHIR natural momen dalam format hh:mm:ss (contoh: '00:09:02'). "
+                    "HARUS persis sama dengan timestamp yang ADA di transkrip. "
+                    "Momen harus berdurasi 30-59 detik dari waktu_start. "
+                    "Berakhir di AKHIR kalimat/respons natural, JANGAN potong di tengah kalimat."
+    )
+    teks_awal_momen: str = Field(
+        description="8-10 kata PERTAMA dari teks transkrip yang diucapkan tepat di waktu_start. "
+                    "Gunakan untuk validasi bahwa timestamp benar-benar sesuai dengan isi transkrip. "
+                    "Contoh: 'saya nggak nyangka kalau dia bisa melakukan'"
     )
     judul_menarik: str = Field(
         description="Judul video Shorts yang WAJIB menggunakan salah satu formula viral berikut: "
@@ -110,6 +122,7 @@ def ambil_transkrip_youtube(video_url):
     yt_id_match = re.search(r'(?:v=|\/shorts\/|\/embed\/|\/v\/|youtu\.be\/|\/videos\/)([a-zA-Z0-9_-]{11})', video_url)
     video_id = yt_id_match.group(1) if yt_id_match else None
     
+    transcript_list = None
     transcript_str = ""
     if video_id:
         print(f"[Info] Mencoba mengambil transkrip asli untuk ID Video: {video_id}...")
@@ -140,7 +153,7 @@ def ambil_transkrip_youtube(video_url):
     else:
         konteks_analisis += "\n(Peringatan: Transkrip percakapan video tidak tersedia untuk video ini. Silakan analisis momen berdasarkan tebakan logis dari Judul.)"
         
-    return konteks_analisis
+    return konteks_analisis, transcript_list
 
 
 # 5. Fungsi Hapus Data Lama
@@ -204,9 +217,7 @@ def simpan_ke_sqlite(video_url, json_data_string):
                 deskripsi_final = f"[{kategori}] {deskripsi_final}"
             
             waktu_start = moment.get("waktu_start", "00:00:00")
-            
-            # Hitung waktu_selesai: waktu_start + 59 detik (durasi Shorts standar)
-            waktu_selesai = hitung_waktu_selesai(waktu_start, durasi_detik=59)
+            waktu_selesai = moment.get("waktu_selesai") or hitung_waktu_selesai(waktu_start, durasi_detik=59)
             
             cursor.execute('''
                 INSERT INTO moments (video_id, waktu_start, waktu_selesai, judul_menarik, hashtag_terbaik, deskripsi_pendek, is_selected)
@@ -253,13 +264,78 @@ def hitung_waktu_selesai(waktu_start, durasi_detik=59):
     except Exception:
         return "00:00:59"  # Fallback jika ada error
 
+# Fungsi Bantu: Konversi HH:MM:SS ke detik
+def hhmmss_ke_detik(timestamp_str):
+    parts = timestamp_str.split(':')
+    return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(float(parts[2]))
+
+# Fungsi Bantu: Konversi detik ke HH:MM:SS
+def detik_ke_hhmmss(detik):
+    h = detik // 3600
+    m = (detik % 3600) // 60
+    s = detik % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+def validasi_dan_snap_timestamp(daftar_moment, transcript_list):
+    """Snap setiap timestamp ke transkrip dan validasi durasi 30-59 detik"""
+    if not transcript_list:
+        return daftar_moment
+
+    # Buat sorted list timestamp transkrip dalam detik
+    transcript_detik = sorted(set(int(e['start']) for e in transcript_list))
+
+    def snap_ke_bawah(target_detik):
+        """Cari timestamp transkrip <= target_detik"""
+        candidates = [t for t in transcript_detik if t <= target_detik]
+        return max(candidates) if candidates else transcript_detik[0]
+
+    def snap_ke_atas(target_detik):
+        """Cari timestamp transkrip >= target_detik"""
+        candidates = [t for t in transcript_detik if t >= target_detik]
+        return min(candidates) if candidates else transcript_detik[-1]
+
+    for moment in daftar_moment:
+        start_detik = hhmmss_ke_detik(moment.get("waktu_start", "00:00:00"))
+        end_detik = hhmmss_ke_detik(moment.get("waktu_selesai", detik_ke_hhmmss(start_detik + 59)))
+
+        # Snap start ke timestamp transkrip terdekat (mundur)
+        start_detik = snap_ke_bawah(start_detik)
+
+        # Snap end ke timestamp transkrip terdekat (mundur)
+        # Pastikan end >= start + 30
+        min_end = start_detik + 30
+        if end_detik < min_end:
+            end_detik = min_end
+        end_detik = snap_ke_bawah(end_detik)
+        if end_detik <= start_detik:
+            end_detik = start_detik + 30
+
+        # Validasi durasi 30-59
+        durasi = end_detik - start_detik
+        if durasi > 59:
+            end_detik = start_detik + 59
+            end_detik = snap_ke_bawah(end_detik)
+            if end_detik <= start_detik:
+                end_detik = start_detik + 59
+        elif durasi < 30:
+            end_detik = start_detik + 30
+            end_detik = snap_ke_atas(end_detik)
+            if end_detik - start_detik > 59:
+                end_detik = start_detik + 59
+
+        moment["waktu_start"] = detik_ke_hhmmss(start_detik)
+        moment["waktu_selesai"] = detik_ke_hhmmss(end_detik)
+
+    return daftar_moment
+
+
 # ================= Alur Utama =================
 
 # Langkah 1: Bersihkan database
 hapus_data_lama_jika_ada(url_video)
 
 # Langkah 2: Ambil informasi kontekstual asli dari YouTube
-info_video = ambil_transkrip_youtube(url_video)
+info_video, transcript_list = ambil_transkrip_youtube(url_video)
 
 # Langkah 3: Kontak Gemini AI dengan menyertakan detail video asli
 client = genai.Client(api_key=gemini_key)
@@ -272,7 +348,7 @@ Anda adalah VIRAL CONTENT STRATEGIST kelas dunia yang telah membantu ratusan cha
 Link: {url_video}
 
 === MISI ANDA ===
-Analisis transkrip di atas dan temukan 8-20 momen PALING BERPOTENSI VIRAL untuk dijadikan YouTube Shorts berdurasi 30-59 detik.
+Analisis transkrip di atas dan temukan 8-15 momen PALING BERPOTENSI VIRAL untuk dijadikan YouTube Shorts berdurasi 30-59 detik.
 
 === KRITERIA SELEKSI MOMEN (WAJIB DIPENUHI) ===
 Pilih HANYA momen yang memenuhi minimal 2 kriteria berikut:
@@ -314,11 +390,26 @@ Hashtag BAIK: "#shorts #fyp #viral #ngakak #interogasi #reaksilucu #komedi"
 Deskripsi BURUK: "Momen seru dari acara Lapor Pak"
 Deskripsi BAIK: "Ekspresi panik Arief Didu ini bikin semua orang ngakak Dia sama sekali nggak nyangka bakal diinterogasi soal ini! Tonton sampai habis, dijamin ngakak!"
 
+=== ATURAN TIMESTAMP WAJIB ===
+SETIAP `waktu_start` dan `waktu_selesai` HARUS PERSIS SAMA dengan timestamp yang ADA di transkrip.
+CARA CEK: Lihat daftar timestamp di transkrip (contoh: [00:08:04]), pastikan waktu yang kamu tulis
+benar-benar muncul di baris transkrip. JANGAN MEMBUAT TIMESTAMP SENDIRI.
+`waktu_selesai` harus 30-59 detik dari `waktu_start` dan berada di AKHIR kalimat natural.
+
+=== VERIFIKASI KUALITAS (lakukan sebelum mengumpulkan output) ===
+Untuk setiap momen yang kamu pilih, tanyakan pada dirimu sendiri:
+1. Apakah `waktu_start` dan `waktu_selesai` benar-benar ADA di transkrip? (WAJIB)
+2. Apakah judul mencerminkan apa yang SEBENARNYA terjadi di momen itu? (WAJIB)
+3. Apakah momen ini bisa viral tanpa konteks tambahan?
+4. Apakah durasi 30-59 detik? Jika kurang, perpanjang; jika lebih, potong.
+HANYA kumpulkan momen yang lolos semua cek di atas.
+
 === INSTRUKSI TEKNIS ===
 - Semua teks WAJIB dalam Bahasa Indonesia yang natural dan gaul (bukan formal)
-- Waktu start HARUS tepat di awal kalimat berdasarkan timestamp transkrip
+- `waktu_start` dan `waktu_selesai` HARUS PERSIS sama dengan timestamp di transkrip
 - Jangan gunakan emoji di judul dan deskripsi
 - Pastikan setiap momen bisa berdiri sendiri tanpa konteks tambahan
+- Judul WAJIB sesuai dengan isi momen, jangan clickbait yang menyesatkan
 """
 
 print(f"\nMengirimkan data asli ke Gemini AI... Mohon tunggu...")
@@ -336,7 +427,16 @@ try:
     )
 
     print("Hasil Analisis kontekstual dari Gemini berhasil didapatkan.")
-    simpan_ke_sqlite(url_video, response.text)
+
+    # Post-processing: validasi & snap timestamp ke transkrip
+    data_dict = json.loads(response.text)
+    daftar_moment = data_dict.get("daftar_moment", [])
+    if transcript_list:
+        print(f"[Validasi] Men-snap {len(daftar_moment)} momen ke timestamp transkrip...")
+        daftar_moment = validasi_dan_snap_timestamp(daftar_moment, transcript_list)
+        print(f"[Sukses] Validasi timestamp selesai.")
+
+    simpan_ke_sqlite(url_video, json.dumps({"daftar_moment": daftar_moment}))
 
 except Exception as e:
     print(f"\nTerjadi kesalahan saat memproses API: {e}")

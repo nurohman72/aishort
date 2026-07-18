@@ -1,0 +1,46 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "AGENTS.md",
+    "README.md"
+  ],
+  "references": {
+    "web_server": {
+      "path": "web_server.py",
+      "description": "Main FastAPI backend server - entry point for the application"
+    },
+    "analisa": {
+      "path": "analisa_youtube.py",
+      "description": "Gemini AI analysis module for content analysis"
+    },
+    "download": {
+      "path": "download_youtube.py",
+      "description": "yt-dlp downloader module"
+    },
+    "potong": {
+      "path": "potong_video.py",
+      "description": "FFmpeg video cutter module"
+    },
+    "upload": {
+      "path": "upload_youtube.py",
+      "description": "YouTube Data API uploader module"
+    },
+    "autocaption": {
+      "path": "autocaption.py",
+      "description": "Whisper auto-caption subtitle pipeline"
+    },
+    "frontend": {
+      "path": "web_static",
+      "description": "Frontend SPA assets (index.html, app.js, style.css)"
+    }
+  },
+  "permission": {
+    "bash": {
+      "python *": "allow",
+      "pip *": "ask",
+      "git *": "allow",
+      "*": "ask"
+    },
+    "edit": "ask"
+  }
+}
