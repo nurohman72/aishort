@@ -2,12 +2,13 @@
 
 ![NurClipper Logo](logo.png)
 
-**NurClipper** adalah aplikasi web-based yang mengotomatisasi proses pembuatan konten YouTube Shorts dari video podcast atau konten panjang. Menggunakan kecerdasan buatan (Gemini AI) untuk analisis konten, FFmpeg untuk pemotongan video, dan integrasi langsung dengan YouTube API untuk upload.
+**NurClipper** adalah aplikasi web-based yang mengotomatisasi proses pembuatan konten YouTube Shorts dan Facebook Reels dari video podcast atau konten panjang. Menggunakan kecerdasan buatan (Gemini AI) untuk analisis konten, FFmpeg untuk pemotongan video, dan integrasi langsung dengan YouTube API dan Facebook Graph API untuk upload.
 
 ## 📊 Changelog Cepat
 
 | Versi | Tanggal | Perubahan Utama |
 |-------|---------|-----------------|
+| **2.3.0** | July 2026 | Facebook Reels upload (Resumable Upload API), cleanup unused files |
 | **2.2.0** | June 2026 | Pipeline auto-recovery, error handling overhaul, reset API, periodic stale cleanup, safety improvements |
 | **2.1.0** | June 2026 | Durasi max 59 detik, auto-refresh token, encoding fix, database schema update, start.bat, start_debug.bat |
 | **2.0.0** | May 2026 | Web-based app, dark/light theme, real-time SSE, scheduler |
@@ -25,6 +26,7 @@
 
 ### 🎬 **Video Processing Pipeline**
 - **4-Tahap Otomatisasi**: Analisa → Download → Potong → Upload
+- **Facebook Reels** upload terpisah (sebagai stage tambahan)
 - **Real-time progress tracking** dengan progress bar visual
 - **Batch processing** untuk multiple video sekaligus
 - **Auto-caption** dengan Whisper AI (opsional)
@@ -70,6 +72,7 @@
 - **FFmpeg** - Video processing & editing
 - **OpenAI Whisper** - Auto-caption generation
 - **YouTube Data API v3** - Video upload & management
+- **Facebook Graph API v21.0** - Reels upload (Resumable Upload API)
 
 ## 📊 Pipeline Kerja
 
@@ -94,6 +97,7 @@
 
 ### 4. **Upload & Scheduling**
 - Upload otomatis ke YouTube channel
+- Upload otomatis ke Facebook Reels (sebagai stage tambahan)
 - Metadata optimization (judul, deskripsi, tags)
 - Scheduler untuk upload terjadwal
 
@@ -158,7 +162,19 @@ GEMINI_API_KEY=your_gemini_api_key_here
 - **Auto-refresh**: Jika token expired, server otomatis refresh tanpa perlu buka browser
 - **Login ulang hanya jika**: Token + refresh token habis (jarang terjadi)
 
-### 4. Jalankan Aplikasi
+### 4. Setup Facebook Reels (Opsional)
+1. Buka [Meta Developer](https://developers.facebook.com/)
+2. Buat App baru → pilih type **Business**
+3. Tambahkan produk **Graph API**
+4. Buka [Graph API Explorer](https://developers.facebook.com/tools/explorer/)
+5. Generate token dengan permission: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`
+6. Tukar ke Page Access Token: `GET /me/accounts?access_token={USER_TOKEN}`
+7. Copy **Page Access Token** dari response
+8. Buka NurClipper → **Settings** → **Facebook Reels** → isi Page ID & Page Access Token
+
+**Catatan**: Facebook hanya perlu Page Access Token (tidak perlu OAuth flow seperti YouTube).
+
+### 5. Jalankan Aplikasi
 
 **Opsi A: Menggunakan Start Script (Recommended)**
 ```bash
@@ -200,6 +216,7 @@ aishort/
 ├── download_youtube.py        # yt-dlp downloader with progress
 ├── potong_video.py            # FFmpeg video cutter with progress
 ├── upload_youtube.py          # YouTube uploader with metadata
+├── upload_facebook.py         # Facebook Reels uploader (Resumable Upload API)
 ├── autocaption.py             # Whisper auto-caption module
 ├── requirements.txt           # Python dependencies
 ├── environment.txt            # API keys configuration
@@ -244,10 +261,12 @@ Tabel `moments` memiliki kolom berikut:
 | `judul_menarik` | TEXT | Judul viral yang dihasilkan Gemini |
 | `hashtag_terbaik` | TEXT | Hashtag berlapis untuk SEO |
 | `deskripsi_pendek` | TEXT | Deskripsi SEO dengan kategori emosi |
-| `is_uploaded` | INTEGER | Status upload (0=belum, 1=sudah) |
+| `is_uploaded` | INTEGER | Status upload YouTube (0=belum, 1=sudah) |
+| `is_uploaded_fb` | INTEGER | Status upload Facebook (0=belum, 1=sudah) |
 | `is_selected` | INTEGER | Dipilih untuk dipotong (0=tidak, 1=ya) |
 
 **Perubahan di versi 2.1.0**: Tambah kolom `waktu_selesai` untuk durasi potongan akurat.
+**Perubahan di versi 2.3.0**: Tambah kolom `is_uploaded_fb` untuk status upload Facebook Reels.
 
 ### Theme Customization
 - **Dark Theme** (default) - Glassmorphism dengan warna gelap
@@ -285,7 +304,13 @@ Tabel `moments` memiliki kolom berikut:
 - Jika hasil analisa menghasilkan durasi > 59 detik, sistem otomatis memotong ke 59 detik
 - Timestamp `waktu_selesai` dihitung otomatis dari `waktu_start` + 59 detik
 
-### 5. Monitoring & Management
+### 5. Upload ke Facebook Reels (Opsional)
+1. Pastikan sudah mengatur Facebook di Settings (lihat Setup Facebook Reels)
+2. Klik tombol **📘 Facebook** di pipeline
+3. Semua momen yang sudah dipotong akan diupload ke Facebook Reels
+4. Progress upload bisa dipantau di log real-time
+
+### 6. Monitoring & Management
 - **Dashboard**: Statistik real-time
 - **Antrean**: Kelola semua video
 - **Jadwal**: Upload terjadwal
@@ -605,5 +630,5 @@ MIT License - lihat [LICENSE](LICENSE) file untuk detail.
 
 **NurClipper** - Automate Your YouTube Shorts Creation 🚀
 
-*Terakhir diperbarui: June 2026*
-*Version: 2.2.0*
+*Terakhir diperbarui: July 2026*
+*Version: 2.3.0*

@@ -9,7 +9,7 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 - **Backend:** Python 3.13, FastAPI, Uvicorn, SQLite, Pydantic, SSE-Starlette
 - **Frontend:** Vanilla JS SPA, HTML5, CSS3 (CSS variables, glassmorphism, dark/light themes)
 - **AI/Video:** Google Gemini 2.5 Flash, yt-dlp, FFmpeg, OpenAI Whisper (PyTorch)
-- **Auth:** Google OAuth, YouTube Data API v3, Facebook Graph API v19.0 (Page Access Token)
+- **Auth:** Google OAuth, YouTube Data API v3, Facebook Graph API v21.0 (Page Access Token)
 
 ## Development Commands
 
@@ -66,18 +66,17 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 
 | File | Purpose |
 |---|---|---|
-| `web_server.py` | Main entry point (900+ lines) |
-| `config.json` | App config (caption settings, etc.) |
+| `web_server.py` | Main entry point (936 lines) |
+| `config.json` | App config (caption + Facebook settings) |
 | `analisa_youtube.py` | AI analysis with Gemini |
 | `download_youtube.py` | yt-dlp downloader |
 | `potong_video.py` | FFmpeg cutting + captioning |
-| `upload_youtube.py` | YouTube Data API uploader (268 lines) |
-| `upload_facebook.py` | Facebook Reels uploader (Page Access Token, Graph API) |
+| `upload_youtube.py` | YouTube Data API uploader (301 lines) |
+| `upload_facebook.py` | Facebook Reels uploader (Resumable Upload API v21.0, 255 lines) |
 | `autocaption.py` | Whisper subtitle pipeline |
-| `web_static/app.js` | Frontend SPA logic (943 lines) |
-| `web_static/style.css` | Design system (~1337 lines) |
-| `web_static/index.html` | Main HTML page |
-| `NurClipper.py` | Legacy Tkinter GUI (v1) |
+| `web_static/app.js` | Frontend SPA logic (1114 lines) |
+| `web_static/style.css` | Design system (1611 lines) |
+| `web_static/index.html` | Main HTML page (607 lines) |
 
 ## Key Endpoints (v2.2.0 additions)
 | Endpoint | Method | Description |
