@@ -121,9 +121,13 @@ def ambil_data_momen_dari_db(video_id):
         FROM moments WHERE video_id = ? AND is_selected = 1
     """, (video_id,))
     rows = cursor.fetchall()
+    
+    cursor.execute("SELECT channel_video FROM videos WHERE id = ?", (video_id,))
+    channel_row = cursor.fetchone()
     conn.close()
     
-    # Kembalikan dict {moment_id: {judul, hashtag, deskripsi}}
+    channel_name = channel_row[0] if channel_row and channel_row[0] else ""
+    
     return {
         str(row[0]): {
             "judul": row[1],
@@ -131,7 +135,7 @@ def ambil_data_momen_dari_db(video_id):
             "deskripsi": row[3] or ""
         }
         for row in rows
-    }
+    }, channel_name
 
 def tandai_momen_terupload_di_db(moment_id):
     """Memperbarui status upload momen di SQLite"""
@@ -196,7 +200,7 @@ if __name__ == "__main__":
         
     # 1. Ambil data teks dari database
     safe_print("[1/3] Membaca data momen dari database...")
-    dict_momen = ambil_data_momen_dari_db(target_video_id)
+    dict_momen, channel_name = ambil_data_momen_dari_db(target_video_id)
     
     if not dict_momen:
         safe_print(f"[Error] Tidak ada data momen di database untuk Video ID {target_video_id}!")
@@ -244,7 +248,10 @@ if __name__ == "__main__":
                     deskripsi_shorts = (
                         f"{deskripsi_bersih}\n\n"
                         f"{hashtag_str}"
-                    ).strip()[:5000]
+                    ).strip()
+                    if channel_name:
+                        deskripsi_shorts += f"\n\nSumber: {channel_name}"
+                    deskripsi_shorts = deskripsi_shorts[:5000]
 
                     safe_print(f"-> Mengupload Momen ID {moment_id}: \"{judul_asli}\"")
                     try:

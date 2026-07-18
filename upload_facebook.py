@@ -46,7 +46,13 @@ def get_moments_from_db(video_id):
         FROM moments WHERE video_id = ? AND is_uploaded_fb = 0 AND is_selected = 1
     """, (video_id,))
     rows = cursor.fetchall()
+    
+    cursor.execute("SELECT channel_video FROM videos WHERE id = ?", (video_id,))
+    channel_row = cursor.fetchone()
     conn.close()
+    
+    channel_name = channel_row[0] if channel_row and channel_row[0] else ""
+    
     return {
         str(row[0]): {
             "judul": row[1],
@@ -54,7 +60,7 @@ def get_moments_from_db(video_id):
             "deskripsi": row[3] or ""
         }
         for row in rows
-    }
+    }, channel_name
 
 def mark_uploaded_fb(moment_id):
     try:
@@ -174,7 +180,7 @@ if __name__ == "__main__":
     safe_print(f"   Token valid. Page: {page_name}")
 
     safe_print("[2/4] Membaca data momen dari database...")
-    dict_momen = get_moments_from_db(target_video_id)
+    dict_momen, channel_name = get_moments_from_db(target_video_id)
     if not dict_momen:
         safe_print(f"[Peringatan] Tidak ada momen yang perlu diupload ke Facebook untuk Video ID {target_video_id}.")
         sys.exit(0)
@@ -199,7 +205,10 @@ if __name__ == "__main__":
         deskripsi_bersih = data_momen["deskripsi"].strip()
         hashtag_str = data_momen["hashtag"]
 
-        description = f"{deskripsi_bersih}\n\n{hashtag_str}".strip()[:1000]
+        description = f"{deskripsi_bersih}\n\n{hashtag_str}".strip()
+        if channel_name:
+            description += f"\n\nSumber: {channel_name}"
+        description = description[:1000]
 
         safe_print(f"-> [{counter_upload+counter_fail+1}/{len(clip_files)}] Mengupload Reels Momen ID {moment_id}: \"{judul}\"")
 
