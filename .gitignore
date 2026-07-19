@@ -16,4 +16,5 @@ config.json
 *.pickle
 *.log
 .agents/
+.opencode/
 BRAINSTORMING.md
