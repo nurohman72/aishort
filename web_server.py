@@ -161,6 +161,8 @@ def log_message(video_id: Optional[int], text: str):
 
 # ----------------- BACKGROUND SEQUENTIAL WORKER -----------------
 task_queue = queue.Queue()
+active_processes = set()
+active_processes_lock = threading.Lock()
 
 from contextlib import contextmanager
 
@@ -318,8 +320,14 @@ def background_worker():
                     elif current_stage == "facebook":
                         cmd = [sys.executable, "upload_facebook.py", str(video_id)]
                         
-                    # Eksekusi
-                    stage_success = execute_subprocess_live(video_id, current_stage, cmd)
+                    # Eksekusi — tandai video sebagai active agar cleanup thread tidak mereset statusnya
+                    with active_processes_lock:
+                        active_processes.add(video_id)
+                    try:
+                        stage_success = execute_subprocess_live(video_id, current_stage, cmd)
+                    finally:
+                        with active_processes_lock:
+                            active_processes.discard(video_id)
                     
                     if stage_success:
                         update_video_status(video_id, **{status_key: "success"})
@@ -432,21 +440,26 @@ def startup_event():
     def stale_status_cleanup():
         while True:
             try:
+                with active_processes_lock:
+                    active_vids = list(active_processes)
                 conn = sqlite3.connect(DB_FILE)
                 cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE videos
-                    SET status_analisis = CASE WHEN status_analisis = 'processing' THEN 'failed' ELSE status_analisis END,
-                        status_download  = CASE WHEN status_download  = 'processing' THEN 'failed' ELSE status_download  END,
-                        status_potong    = CASE WHEN status_potong    = 'processing' THEN 'failed' ELSE status_potong    END,
-                        status_upload    = CASE WHEN status_upload    = 'processing' THEN 'failed' ELSE status_upload    END,
-                        status_facebook  = CASE WHEN status_facebook  = 'processing' THEN 'failed' ELSE status_facebook  END
-                    WHERE status_analisis = 'processing'
-                       OR status_download  = 'processing'
-                       OR status_potong    = 'processing'
-                       OR status_upload    = 'processing'
-                       OR status_facebook  = 'processing'
-                """)
+                # Reset processing → failed HANYA untuk video yang TIDAK sedang diproses
+                for vid_col in ["status_analisis", "status_download", "status_potong", "status_upload", "status_facebook"]:
+                    if active_vids:
+                        placeholders = ",".join("?" * len(active_vids))
+                        cursor.execute(f"""
+                            UPDATE videos
+                            SET {vid_col} = 'failed'
+                            WHERE {vid_col} = 'processing'
+                              AND id NOT IN ({placeholders})
+                        """, active_vids)
+                    else:
+                        cursor.execute(f"""
+                            UPDATE videos
+                            SET {vid_col} = 'failed'
+                            WHERE {vid_col} = 'processing'
+                        """)
                 affected = cursor.rowcount
                 conn.commit()
                 conn.close()
