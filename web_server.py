@@ -637,7 +637,7 @@ def load_app_config():
                 return json.load(f)
         except Exception as e:
             print(f"[Config] Gagal baca config.json: {e}")
-    return DEFAULT_CONFIG.copy()
+    return json.loads(json.dumps(DEFAULT_CONFIG))
 
 @app.get("/api/config")
 def get_config():
@@ -680,8 +680,17 @@ def get_config():
 @app.post("/api/config")
 def update_config(payload: ConfigUpdate):
     try:
+        old_gemini_key = ""
+        if os.path.exists(ENV_FILE):
+            with open(ENV_FILE, "r") as ef:
+                for line in ef:
+                    if line.startswith("GEMINI_API_KEY="):
+                        old_gemini_key = line.replace("GEMINI_API_KEY=", "").strip()
+        new_gemini_key = payload.gemini_key.strip()
+        if "****" in new_gemini_key or not new_gemini_key:
+            new_gemini_key = old_gemini_key
         with open(ENV_FILE, "w") as f:
-            f.write(f"GEMINI_API_KEY={payload.gemini_key.strip()}\n")
+            f.write(f"GEMINI_API_KEY={new_gemini_key}\n")
         log_message(None, "Gemini API Key berhasil diperbarui di environment.txt.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal menulis environment.txt: {e}")
