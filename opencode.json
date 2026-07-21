@@ -4,6 +4,9 @@
     "AGENTS.md",
     "README.md"
   ],
+  "skills": {
+    "paths": [".opencode/skills"]
+  },
   "references": {
     "web_server": {
       "path": "web_server.py",
