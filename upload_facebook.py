@@ -43,7 +43,7 @@ def get_moments_from_db(video_id):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT id, judul_menarik, hashtag_terbaik, deskripsi_pendek
-        FROM moments WHERE video_id = ? AND is_uploaded_fb = 0 AND is_selected = 1
+        FROM moments WHERE video_id = ? AND (is_uploaded_fb = 0 OR is_uploaded_fb IS NULL) AND is_selected = 1
     """, (video_id,))
     rows = cursor.fetchall()
     
@@ -66,11 +66,27 @@ def mark_uploaded_fb(moment_id):
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute("UPDATE moments SET is_uploaded_fb = 1 WHERE id = ?", (moment_id,))
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("UPDATE moments SET is_uploaded_fb = 1, upload_tanggal_fb = ? WHERE id = ?", (today, moment_id))
         conn.commit()
         conn.close()
     except Exception as ex:
         safe_print(f"   [Peringatan] Gagal menandai status FB upload: {ex}")
+
+def mark_upload_date(video_id):
+    """Update tanggal upload Facebook video induk di SQLite"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("UPDATE videos SET upload_tanggal_fb = ? WHERE id = ?", (today, video_id))
+        conn.commit()
+        conn.close()
+        safe_print(f"   [Database] Tanggal upload FB {today} dicatat untuk Video ID {video_id}.")
+    except Exception as ex:
+        safe_print(f"   [Peringatan] Gagal update tanggal upload FB: {ex}")
 
 def verify_token(page_id, access_token):
     url = f"{FB_BASE_URL}/{page_id}"
@@ -255,6 +271,7 @@ if __name__ == "__main__":
         safe_print(f"[Peringatan] Tidak ada file cocok untuk ID {target_video_id}.")
     elif counter_upload > 0:
         safe_print(f"\n[Selesai] Total {counter_upload} Reels berhasil diupload ke Facebook!")
+        mark_upload_date(target_video_id)
         if counter_fail > 0:
             safe_print(f"[Info] {counter_fail} momen gagal diupload.")
     else:

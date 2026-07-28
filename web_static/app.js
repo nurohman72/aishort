@@ -342,13 +342,14 @@ document.addEventListener("DOMContentLoaded", () => {
             toast("error", "Gagal memuat data video");
         } finally {
             if (showSync && syncEl) syncEl.classList.add("hidden");
+            fetchAutoUploadStatus();
         }
     }
 
     function updateStats() {
         let processing = 0, completed = 0, failed = 0;
         videos.forEach(v => {
-            const stages = [v.status_analisis, v.status_download, v.status_potong, v.status_upload, v.status_facebook];
+            const stages = [v.status_analisis, v.status_download, v.status_potong, v.status_upload, v.status_facebook, v.status_telegram];
             if (stages.includes("processing")) processing++;
             if (v.status_upload === "success") completed++;
             if (stages.includes("failed")) failed++;
@@ -364,6 +365,20 @@ document.addEventListener("DOMContentLoaded", () => {
         return m ? m[1] : url.split("/").pop().split("?")[0];
     }
 
+    function formatTanggal(dateStr) {
+        if (!dateStr) return "—";
+        try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return dateStr;
+            const now = new Date();
+            const diff = (now - d) / (1000 * 60 * 60 * 24);
+            if (diff < 1 && now.getDate() === d.getDate()) return "Hari ini";
+            if (diff < 2 && now.getDate() - d.getDate() === 1) return "Kemarin";
+            const months = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+            return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+        } catch { return dateStr; }
+    }
+
     function buildVideoRowHTML(v) {
         const ytId = extractYtId(v.url);
         const thumb = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
@@ -371,18 +386,23 @@ document.addEventListener("DOMContentLoaded", () => {
         const title = escAttr(v.judul_video || v.url);
         const channel = escHtml(v.channel_video || "—");
         const displayTitle = escHtml(v.judul_video || v.url);
+        const tgl = formatTanggal(v.tanggal_analisis);
         return `
         <div class="video-row ${isActive}" data-id="${v.id}">
             <img class="vr-thumb" src="${thumb}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2280%22 height=%2246%22><rect fill=%22%23222%22 width=%2280%22 height=%2246%22/></svg>'">
             <div class="vr-info">
                 <div class="vr-channel">${channel}</div>
                 <div class="vr-title" title="${title}">${displayTitle}</div>
-                <div class="vr-stages">
-                    <span class="sbadge ${v.status_analisis}">🔍 ${v.status_analisis}</span>
-                    <span class="sbadge ${v.status_download}">📥 ${v.status_download}</span>
-                    <span class="sbadge ${v.status_potong}">✂️ ${v.status_potong}</span>
-                    <span class="sbadge ${v.status_upload}">📤 ${v.status_upload}</span>
-                    <span class="sbadge ${v.status_facebook}">📘 ${v.status_facebook}</span>
+                <div class="vr-meta-bottom">
+                    <span class="vr-date"><i class="fa-regular fa-calendar"></i> ${tgl}</span>
+                    <div class="vr-stages">
+                        <span class="sbadge ${v.status_analisis}">🔍 ${v.status_analisis}</span>
+                        <span class="sbadge ${v.status_download}">📥 ${v.status_download}</span>
+                        <span class="sbadge ${v.status_potong}">✂️ ${v.status_potong}</span>
+                        <span class="sbadge ${v.status_upload}">📤 ${v.status_upload}</span>
+                        <span class="sbadge ${v.status_facebook}">📘 ${v.status_facebook}</span>
+                        <span class="sbadge ${v.status_telegram}">📱 ${v.status_telegram}</span>
+                    </div>
                 </div>
             </div>
             <button class="vr-del" data-id="${v.id}" title="Hapus"><i class="fa-solid fa-trash-can"></i></button>
@@ -451,6 +471,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!raw) return;
         const urls = raw.split(/\r?\n/).map(u => u.trim()).filter(Boolean);
         let ok = 0;
+        let lastAddedId = null;
         for (const url of urls) {
             try {
                 const res = await fetch("/api/videos", {
@@ -458,7 +479,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ url })
                 });
-                if (res.ok) { ok++; }
+                if (res.ok) {
+                    const data = await res.json();
+                    ok++;
+                    lastAddedId = data.video_id;
+                }
                 else {
                     const err = await res.json();
                     toast("warning", "Gagal menambahkan", err.detail || url);
@@ -466,9 +491,12 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch { toast("error", "Koneksi gagal", url); }
         }
         if (ok > 0) {
-            toast("success", `${ok} link ditambahkan`, "Berhasil masuk ke antrean");
+            toast("success", `${ok} link ditambahkan`, "Pipeline prep otomatis dimulai");
             document.getElementById("ytUrls").value = "";
             fetchVideos(true);
+            if (lastAddedId) {
+                setTimeout(() => selectVideo(lastAddedId), 300);
+            }
         }
     });
 
@@ -559,13 +587,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function updatePipelineUI(v) {
-        const stages = ["analisa", "download", "potong", "upload", "facebook"];
+        const stages = ["analisa", "download", "potong", "upload", "facebook", "telegram"];
         const statusMap = {
             analisa:  v.status_analisis,
             download: v.status_download,
             potong:   v.status_potong,
             upload:   v.status_upload,
-            facebook: v.status_facebook
+            facebook: v.status_facebook,
+            telegram: v.status_telegram
         };
 
         const anyProcessing = Object.values(statusMap).includes("processing");
@@ -582,8 +611,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     stepEl.querySelector(".ps-icon").innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
                 } else {
                     const icons = { analisa: "fa-magnifying-glass", download: "fa-download",
-                                    potong: "fa-scissors", upload: "fa-cloud-arrow-up", facebook: "fa-facebook" };
-                    const brands = { facebook: "fa-brands" };
+                                    potong: "fa-scissors", upload: "fa-cloud-arrow-up", facebook: "fa-facebook", telegram: "fa-telegram" };
+                    const brands = { facebook: "fa-brands", telegram: "fa-brands" };
                     const prefix = brands[s] ? `${brands[s]} ` : "fa-solid ";
                     stepEl.querySelector(".ps-icon").innerHTML = `<i class="${prefix}${icons[s]}"></i>`;
                 }
@@ -594,7 +623,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (dbadge) {
                 dbadge.className = `dbadge ${status || "pending"}`;
                 const labels = { analisa: "🔍 Analisa", download: "📥 Download",
-                                 potong: "✂️ Potong", upload: "📤 Upload", facebook: "📘 Facebook" };
+                                 potong: "✂️ Potong", upload: "📤 Upload", facebook: "📘 Facebook", telegram: "📱 Telegram" };
                 dbadge.textContent = `${labels[s]}: ${status || "pending"}`;
             }
 
@@ -672,6 +701,12 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btnFacebook").addEventListener("click", () => {
         handlePipelineClick("facebook");
     });
+
+    document.getElementById("btnTelegram").addEventListener("click", () => {
+        handlePipelineClick("telegram");
+    });
+
+    document.getElementById("btnTriggerAutoUpload")?.addEventListener("click", triggerAutoUpload);
 
     document.getElementById("btnResetStatus").addEventListener("click", async () => {
         if (!selectedVideoId) return;
@@ -756,7 +791,8 @@ document.addEventListener("DOMContentLoaded", () => {
             let statusHtml = `<span class="mi-status">⏳ Antrean</span>`;
             if (m.is_uploaded === 1) statusHtml = `<span class="mi-status uploaded"><i class="fa-solid fa-circle-check"></i> Sudah Diupload</span>`;
             else if (m.has_clip)     statusHtml = `<span class="mi-status clipped"><i class="fa-solid fa-scissors"></i> Sudah Dipotong</span>`;
-            const fbBadge = m.is_uploaded_fb === 1 ? `<span class="mi-status uploaded"><i class="fa-brands fa-facebook"></i> FB Uploaded</span>` : "";
+            const fbBadge = m.is_uploaded_fb === 1 ? `<span class="mi-status uploaded mi-fb-badge"><i class="fa-brands fa-facebook"></i> FB Uploaded</span>` : "";
+            const tgBadge = m.is_uploaded_tg === 1 ? `<span class="mi-status uploaded mi-tg-badge"><i class="fa-brands fa-telegram"></i> TG Uploaded</span>` : "";
 
             const previewBtn = m.has_clip
                 ? `<button class="btn btn-xs btn-accent btn-play" data-id="${m.id}" data-title="${escHtml(m.judul_menarik)}">
@@ -783,6 +819,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <div class="mi-footer">
                     ${statusHtml}
                     ${fbBadge}
+                    ${tgBadge}
                     ${previewBtn}
                 </div>
             </div>`;
@@ -809,6 +846,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 playPreview(selectedVideoId, parseInt(btn.dataset.id), btn.dataset.title);
             });
         });
+
+        updateFeatureVisibility();
     }
 
     function escHtml(str) {
@@ -871,6 +910,66 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch { console.error("fetchSchedules error"); toast("error", "Gagal memuat jadwal"); }
     }
 
+    // ==========================================
+    // AUTO-UPLOAD STATUS
+    // ==========================================
+    async function fetchAutoUploadStatus() {
+        try {
+            const res = await fetch("/api/auto-upload/status");
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            renderAutoUploadStatus(data);
+        } catch { console.error("fetchAutoUploadStatus error"); }
+    }
+
+    function renderAutoUploadStatus(data) {
+        const el = document.getElementById("autoUploadStatus");
+        if (!el) return;
+
+        if (!data.enabled) {
+            el.classList.add("disabled");
+            el.querySelector(".au-yt-count").textContent = "Nonaktif";
+            el.querySelector(".au-fb-count").textContent = "Nonaktif";
+            el.querySelector(".au-queue").textContent = "-";
+            return;
+        }
+
+        el.classList.remove("disabled");
+        el.querySelector(".au-yt-count").textContent = `${data.youtube_uploaded_today}/${data.limit_per_day}`;
+        el.querySelector(".au-fb-count").textContent = `${data.facebook_uploaded_today}/${data.limit_per_day}`;
+        el.querySelector(".au-queue").textContent = data.pending_queue;
+
+        const ytBar = el.querySelector(".au-bar-yt");
+        const fbBar = el.querySelector(".au-bar-fb");
+        if (ytBar) ytBar.style.width = `${Math.min(100, (data.youtube_uploaded_today / data.limit_per_day) * 100)}%`;
+        if (fbBar) fbBar.style.width = `${Math.min(100, (data.facebook_uploaded_today / data.limit_per_day) * 100)}%`;
+    }
+
+    async function triggerAutoUpload() {
+        const btn = document.getElementById("btnTriggerAutoUpload");
+        if (!btn) return;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Mengantre...';
+        try {
+            const res = await fetch("/api/auto-upload/trigger", { method: "POST" });
+            const data = await res.json();
+            if (data.success && data.enqueued > 0) {
+                toast("success", "Auto-Upload", `${data.enqueued} video diantrekan untuk upload`);
+            } else if (data.success) {
+                toast("info", "Auto-Upload", "Tidak ada video yang perlu diupload");
+            } else {
+                toast("error", "Auto-Upload", data.message || "Gagal memicu auto-upload");
+            }
+            // Refresh status setelah trigger
+            setTimeout(fetchAutoUploadStatus, 1000);
+        } catch {
+            toast("error", "Auto-Upload", "Gagal menghubungi server");
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Upload Sekarang';
+        }
+    }
+
     function renderSchedules() {
         const list = document.getElementById("scheduleList");
         if (!list) return;
@@ -884,7 +983,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const stageLabels = { all: "⚡ All-in-One", analisa: "🔍 Analisa",
-                              download: "📥 Download", potong: "✂️ Potong", upload: "📤 Upload" };
+                              download: "📥 Download", potong: "✂️ Potong", upload: "📤 Upload",
+                              facebook: "📘 Facebook", telegram: "📱 Telegram" };
         const repeatLabels = { once: "Sekali", daily: "Harian", weekly: "Mingguan" };
 
         list.innerHTML = schedules.map(s => `
@@ -954,6 +1054,32 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // SETTINGS PAGE
     // ==========================================
+    function updateFeatureVisibility() {
+        const fbEnabled = !!config.enable_facebook;
+        const tgEnabled = !!config.enable_telegram;
+
+        const psFacebook = document.getElementById("psFacebook");
+        const psTelegram = document.getElementById("psTelegram");
+        const psLine4 = document.getElementById("psLine4");
+        const psLine5 = document.getElementById("psLine5");
+        if (psFacebook) psFacebook.style.display = fbEnabled ? "" : "none";
+        if (psLine4) psLine4.style.display = fbEnabled ? "" : "none";
+        if (psTelegram) psTelegram.style.display = tgEnabled ? "" : "none";
+        if (psLine5) psLine5.style.display = tgEnabled ? "" : "none";
+
+        const fbGroup = document.getElementById("fbSettingsGroup");
+        const tgGroup = document.getElementById("tgSettingsGroup");
+        if (fbGroup) fbGroup.style.display = fbEnabled ? "" : "none";
+        if (tgGroup) tgGroup.style.display = tgEnabled ? "" : "none";
+
+        document.querySelectorAll(".moment-item").forEach(el => {
+            const fbBadge = el.querySelector(".mi-fb-badge");
+            const tgBadge = el.querySelector(".mi-tg-badge");
+            if (fbBadge) fbBadge.style.display = fbEnabled ? "" : "none";
+            if (tgBadge) tgBadge.style.display = tgEnabled ? "" : "none";
+        });
+    }
+
     async function fetchConfig() {
         try {
             const res = await fetch("/api/config");
@@ -994,6 +1120,26 @@ document.addEventListener("DOMContentLoaded", () => {
             if (fpt) fpt.value = config.fb_page_token || "";
             const fpv = document.getElementById("fbPrivacy");
             if (fpv) fpv.value = config.fb_privacy || "PUBLIC";
+            const efCb = document.getElementById("enableFacebook");
+            if (efCb) efCb.checked = !!config.enable_facebook;
+
+            const tgid = document.getElementById("tgApiId");
+            if (tgid) tgid.value = config.tg_api_id || "";
+            const tgHash = document.getElementById("tgApiHash");
+            if (tgHash) tgHash.value = config.tg_api_hash || "";
+            const tgPhone = document.getElementById("tgPhone");
+            if (tgPhone) tgPhone.value = config.tg_phone || "";
+            const tgSession = document.getElementById("tgSessionName");
+            if (tgSession) tgSession.value = config.tg_session_name || "nurclipper_tg";
+            const etCb = document.getElementById("enableTelegram");
+            if (etCb) etCb.checked = !!config.enable_telegram;
+
+            const eau = document.getElementById("enableAutoUpload");
+            if (eau) eau.checked = config.auto_upload_enabled !== false;
+            const ul = document.getElementById("uploadLimit");
+            if (ul) ul.value = config.upload_limit_per_day || 30;
+            const mw = document.getElementById("maxWorkers");
+            if (mw) mw.value = config.max_workers || 2;
 
             // OAuth indicator in settings
             const oauthInd = document.getElementById("oauthIndicator");
@@ -1002,6 +1148,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 oauthInd.querySelector(".dot").className = `dot ${connected ? "dot-green" : "dot-red"}`;
                 oauthText.textContent = connected ? "Terhubung ke YouTube" : "Belum terhubung";
             }
+
+            updateFeatureVisibility();
         } catch { console.error("fetchConfig error"); toast("error", "Gagal memuat pengaturan"); }
     }
 
@@ -1019,15 +1167,42 @@ document.addEventListener("DOMContentLoaded", () => {
                     font_name: document.getElementById("fontName").value.trim() || "Cooper Black",
                     font_size: document.getElementById("fontSize").value.trim() || "6",
                     whisper_model: document.getElementById("whisperModel").value,
+                    enable_facebook: document.getElementById("enableFacebook").checked,
                     fb_page_id: document.getElementById("fbPageId").value.trim(),
                     fb_page_token: document.getElementById("fbPageToken").value.trim(),
-                    fb_privacy: document.getElementById("fbPrivacy").value
+                    fb_privacy: document.getElementById("fbPrivacy").value,
+                    enable_telegram: document.getElementById("enableTelegram").checked,
+                    tg_api_id: document.getElementById("tgApiId").value.trim(),
+                    tg_api_hash: document.getElementById("tgApiHash").value.trim(),
+                    tg_phone: document.getElementById("tgPhone").value.trim(),
+                    tg_session_name: document.getElementById("tgSessionName").value.trim() || "nurclipper_tg",
+                    auto_upload_enabled: document.getElementById("enableAutoUpload")?.checked ?? true,
+                    upload_limit_per_day: parseInt(document.getElementById("uploadLimit")?.value) || 30,
+                    max_workers: parseInt(document.getElementById("maxWorkers")?.value) || 2
                 })
             });
             if (!res.ok) throw new Error();
             toast("success", "Pengaturan disimpan");
             fetchConfig();
         } catch { toast("error", "Gagal menyimpan pengaturan"); }
+    });
+
+    document.getElementById("enableFacebook")?.addEventListener("change", (e) => {
+        const group = document.getElementById("fbSettingsGroup");
+        if (group) group.style.display = e.target.checked ? "" : "none";
+        const ps = document.getElementById("psFacebook");
+        const ln = document.getElementById("psLine4");
+        if (ps) ps.style.display = e.target.checked ? "" : "none";
+        if (ln) ln.style.display = e.target.checked ? "" : "none";
+    });
+
+    document.getElementById("enableTelegram")?.addEventListener("change", (e) => {
+        const group = document.getElementById("tgSettingsGroup");
+        if (group) group.style.display = e.target.checked ? "" : "none";
+        const ps = document.getElementById("psTelegram");
+        const ln = document.getElementById("psLine5");
+        if (ps) ps.style.display = e.target.checked ? "" : "none";
+        if (ln) ln.style.display = e.target.checked ? "" : "none";
     });
 
     document.getElementById("toggleKey")?.addEventListener("click", () => {
@@ -1045,6 +1220,18 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("toggleFbToken")?.addEventListener("click", () => {
         const inp = document.getElementById("fbPageToken");
         const icon = document.querySelector("#toggleFbToken i");
+        if (inp.type === "password") {
+            inp.type = "text";
+            icon.className = "fa-solid fa-eye-slash";
+        } else {
+            inp.type = "password";
+            icon.className = "fa-solid fa-eye";
+        }
+    });
+
+    document.getElementById("toggleTgHash")?.addEventListener("click", () => {
+        const inp = document.getElementById("tgApiHash");
+        const icon = document.querySelector("#toggleTgHash i");
         if (inp.type === "password") {
             inp.type = "text";
             icon.className = "fa-solid fa-eye-slash";

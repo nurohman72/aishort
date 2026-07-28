@@ -558,6 +558,28 @@ select option { background: #1a1d26; }
     margin: 2px 0 5px;
 }
 
+.vr-meta-bottom {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+
+.vr-date {
+    font-size: 10.5px;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.vr-date i {
+    font-size: 10px;
+    opacity: 0.7;
+}
+
 .vr-stages { display: flex; gap: 5px; flex-wrap: wrap; }
 
 .sbadge {
@@ -1608,4 +1630,86 @@ select option { background: #1a1d26; }
 body, .sidebar, .topbar, .card, .stat-card, .log-panel,
 .video-row, .moment-item, .pipeline-section, .toast, .confirm-box {
     transition: background var(--speed), border-color var(--speed), color var(--speed), box-shadow var(--speed);
+}
+
+/* ===================== AUTO-UPLOAD STATUS ===================== */
+.auto-upload-status {
+    margin: 12px 0 0 0;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: var(--glass-bg);
+    border: 1px solid var(--border);
+}
+
+.auto-upload-status.disabled {
+    opacity: 0.5;
+}
+
+.au-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: 10px;
+}
+
+.au-header i { color: var(--accent); }
+
+.au-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.au-stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+}
+
+.au-platform {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-2);
+    font-weight: 500;
+}
+
+.au-count {
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-1);
+}
+
+.au-bar-track {
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+}
+
+.au-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+    width: 0%;
+}
+
+.au-bar-yt { background: #ff0000; }
+.au-bar-fb { background: #1877f2; }
+
+.au-queue-row {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+}
+
+#btnTriggerAutoUpload {
+    margin-top: 10px;
+    font-size: 12px;
+    padding: 8px 12px;
 }

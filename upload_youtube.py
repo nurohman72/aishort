@@ -118,7 +118,7 @@ def ambil_data_momen_dari_db(video_id):
     
     cursor.execute("""
         SELECT id, judul_menarik, hashtag_terbaik, deskripsi_pendek
-        FROM moments WHERE video_id = ? AND is_selected = 1
+        FROM moments WHERE video_id = ? AND is_selected = 1 AND (is_uploaded = 0 OR is_uploaded IS NULL)
     """, (video_id,))
     rows = cursor.fetchall()
     
@@ -142,12 +142,28 @@ def tandai_momen_terupload_di_db(moment_id):
     try:
         conn = sqlite3.connect("database_konten.db")
         cursor = conn.cursor()
-        cursor.execute("UPDATE moments SET is_uploaded = 1 WHERE id = ?", (moment_id,))
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("UPDATE moments SET is_uploaded = 1, upload_tanggal = ? WHERE id = ?", (today, moment_id))
         conn.commit()
         conn.close()
-        safe_print("   [Database] Status upload diperbarui di database SQLite.")
+        safe_print(f"   [Database] Status upload & tanggal {today} dicatat untuk moment ID {moment_id}.")
     except Exception as ex:
         safe_print(f"   [Peringatan] Gagal menandai status terupload: {ex}")
+
+def tandai_tanggal_upload(video_id):
+    """Update tanggal upload video induk di SQLite"""
+    try:
+        conn = sqlite3.connect("database_konten.db")
+        cursor = conn.cursor()
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor.execute("UPDATE videos SET upload_tanggal = ? WHERE id = ?", (today, video_id))
+        conn.commit()
+        conn.close()
+        safe_print(f"   [Database] Tanggal upload {today} dicatat untuk Video ID {video_id}.")
+    except Exception as ex:
+        safe_print(f"   [Peringatan] Gagal update tanggal upload: {ex}")
 
 def upload_ke_youtube(youtube, path_video, judul, deskripsi, tags_list=None):
     """Proses upload file video ke YouTube via API"""
@@ -302,6 +318,7 @@ if __name__ == "__main__":
             safe_print(f"[Peringatan] Tidak ada file cocok ditemukan untuk ID {target_video_id} di folder '{folder_clips}'.")
     else:
         safe_print(f"\n[Selesai] Total {counter_upload} video Shorts berhasil diunggah ke YouTube!")
+        tandai_tanggal_upload(target_video_id)
         if ada_error:
             safe_print(f"[Info] {counter_upload} berhasil, namun beberapa momen gagal diupload.")
     if ada_error:

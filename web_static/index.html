@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -211,6 +211,7 @@
                                         <span class="dbadge" id="dbadgePotong">✂️ Potong</span>
                                         <span class="dbadge" id="dbadgeUpload">📤 Upload</span>
                                         <span class="dbadge" id="dbadgeFacebook">📘 Facebook</span>
+                                        <span class="dbadge" id="dbadgeTelegram">📱 Telegram</span>
                                     </div>
                                 </div>
                             </div>
@@ -268,10 +269,43 @@
                                             <i class="fa-solid fa-play"></i>
                                         </button>
                                     </div>
+                                    <div class="ps-line" id="psLine5"></div>
+                                    <div class="ps-step" id="psTelegram">
+                                        <div class="ps-icon"><i class="fa-brands fa-telegram"></i></div>
+                                        <div class="ps-label">Telegram</div>
+                                        <button class="ps-btn" id="btnTelegram" title="Upload ke Telegram Saved Messages">
+                                            <i class="fa-solid fa-play"></i>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
-                            <!-- VIDEO PREVIEW PLAYER -->
+                            <!-- AUTO-UPLOAD STATUS -->
+                            <div class="auto-upload-status" id="autoUploadStatus">
+                                <div class="au-header">
+                                    <i class="fa-solid fa-robot"></i>
+                                    <span>Auto-Upload Hari Ini</span>
+                                </div>
+                                <div class="au-stats">
+                                    <div class="au-stat-row">
+                                        <span class="au-platform"><i class="fa-brands fa-youtube"></i> YouTube</span>
+                                        <span class="au-count au-yt-count">0/30</span>
+                                    </div>
+                                    <div class="au-bar-track"><div class="au-bar au-bar-yt"></div></div>
+                                    <div class="au-stat-row">
+                                        <span class="au-platform"><i class="fa-brands fa-facebook"></i> Facebook</span>
+                                        <span class="au-count au-fb-count">0/30</span>
+                                    </div>
+                                    <div class="au-bar-track"><div class="au-bar au-bar-fb"></div></div>
+                                    <div class="au-stat-row au-queue-row">
+                                        <span class="au-platform">Antrian</span>
+                                        <span class="au-count au-queue">0</span>
+                                    </div>
+                                    <button class="btn btn-accent btn-sm btn-full" id="btnTriggerAutoUpload" title="Upload semua video yang sudah siap">
+                                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload Sekarang
+                                    </button>
+                                </div>
+                            </div>
                             <div class="preview-player hidden" id="previewPlayer">
                                 <div class="preview-bar">
                                     <span><i class="fa-solid fa-circle-play"></i> Pratinjau Shorts</span>
@@ -354,6 +388,7 @@
                                 <option value="potong">✂️ Potong Video</option>
                                 <option value="upload">📤 Upload YouTube</option>
                                 <option value="facebook">📘 Upload Facebook Reels</option>
+                                <option value="telegram">📱 Upload Telegram</option>
                             </select>
                         </div>
                         <div class="form-row-2">
@@ -461,6 +496,15 @@
                         <div class="card-head" style="padding: 0 0 12px 0; border: none;">
                             <h2><i class="fa-brands fa-facebook"></i> Facebook Reels</h2>
                         </div>
+                        <div class="form-group toggle-row">
+                            <label class="chk-label">
+                                <input type="checkbox" id="enableFacebook">
+                                <span class="chk-box"></span>
+                                Aktifkan Upload Facebook Reels
+                            </label>
+                            <span class="form-hint">Tampilkan tombol Facebook di pipeline dan antrean</span>
+                        </div>
+                        <div id="fbSettingsGroup">
                         <div class="form-group">
                             <label>Page ID</label>
                             <input type="text" id="fbPageId" placeholder="1234567890">
@@ -483,6 +527,74 @@
                                 <option value="FRIENDS">Friends</option>
                                 <option value="ONLY_ME">Only Me</option>
                             </select>
+                        </div>
+                        </div>
+                        <div class="divider"></div>
+                        <div class="card-head" style="padding: 0 0 12px 0; border: none;">
+                            <h2><i class="fa-brands fa-telegram"></i> Telegram Saved Messages</h2>
+                        </div>
+                        <div class="form-group toggle-row">
+                            <label class="chk-label">
+                                <input type="checkbox" id="enableTelegram">
+                                <span class="chk-box"></span>
+                                Aktifkan Upload Telegram
+                            </label>
+                            <span class="form-hint">Tampilkan tombol Telegram di pipeline dan antrean</span>
+                        </div>
+                        <div id="tgSettingsGroup">
+                        <div class="form-group">
+                            <label>API ID</label>
+                            <input type="text" id="tgApiId" placeholder="12345678">
+                            <span class="form-hint">Dari my.telegram.org > API Development Tools</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Hash</label>
+                            <div class="input-with-action">
+                                <input type="password" id="tgApiHash" placeholder="0123456789abcdef...">
+                                <button type="button" class="btn-icon-sm" id="toggleTgHash">
+                                    <i class="fa-solid fa-eye"></i>
+                                </button>
+                            </div>
+                            <span class="form-hint">Dari my.telegram.org > API Development Tools</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Nomor Telepon</label>
+                            <input type="text" id="tgPhone" placeholder="+628123456789">
+                            <span class="form-hint">Nomor Telegram yang akan digunakan (format internasional)</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Session Name</label>
+                            <input type="text" id="tgSessionName" placeholder="nurclipper_tg" style="max-width: 200px;">
+                            <span class="form-hint">Nama file session (default: nurclipper_tg)</span>
+                        </div>
+                        </div>
+                        <div class="divider"></div>
+                        <div class="card-head" style="padding: 0 0 12px 0; border: none;">
+                            <h2><i class="fa-solid fa-robot"></i> Auto-Upload</h2>
+                        </div>
+                        <div class="form-group toggle-row">
+                            <label class="chk-label">
+                                <input type="checkbox" id="enableAutoUpload" checked>
+                                <span class="chk-box"></span>
+                                Aktifkan Auto-Upload
+                            </label>
+                            <span class="form-hint">Upload otomatis video yang sudah dipotong (maks 1 video/platform per 5 menit)</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Batas Upload per Hari (per platform)</label>
+                            <input type="number" id="uploadLimit" value="30" min="1" max="100" style="max-width: 120px;">
+                            <span class="form-hint">YouTube dan Facebook masing-masing punya kuota terpisah</span>
+                        </div>
+                        <div class="divider"></div>
+                        <div class="card-head" style="padding: 0 0 12px 0; border: none;">
+                            <h2><i class="fa-solid fa-layer-group"></i> Worker Parallel</h2>
+                        </div>
+                        <div class="form-row-2">
+                            <div class="form-group">
+                                <label>Jumlah Worker Parallel</label>
+                                <input type="number" id="maxWorkers" value="2" min="1" max="5" style="max-width: 100px;">
+                                <span class="form-hint">Berapa video yang diproses bersamaan (1-5). Lebih banyak = lebih cepat tapi boros resource.</span>
+                            </div>
                         </div>
                         <div class="form-actions">
                             <button type="submit" class="btn btn-primary">
@@ -602,6 +714,6 @@
     </div>
 </div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

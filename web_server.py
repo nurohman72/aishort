@@ -72,9 +72,13 @@ def migrate_db():
         "status_potong": "TEXT DEFAULT 'pending'",
         "status_upload": "TEXT DEFAULT 'pending'",
         "status_facebook": "TEXT DEFAULT 'pending'",
+        "status_telegram": "TEXT DEFAULT 'pending'",
         "error_message": "TEXT"
     }
     
+    new_cols_videos["upload_tanggal"] = "TEXT"
+    new_cols_videos["upload_tanggal_fb"] = "TEXT"
+
     for col_name, col_type in new_cols_videos.items():
         if col_name not in cols:
             print(f"[DB] Menambahkan kolom '{col_name}' ke tabel videos...")
@@ -97,6 +101,23 @@ def migrate_db():
     if "is_uploaded_fb" not in cols_moments:
         print("[DB] Menambahkan kolom 'is_uploaded_fb' ke tabel moments...")
         cursor.execute("ALTER TABLE moments ADD COLUMN is_uploaded_fb INTEGER DEFAULT 0")
+
+    if "is_uploaded_tg" not in cols_moments:
+        print("[DB] Menambahkan kolom 'is_uploaded_tg' ke tabel moments...")
+        cursor.execute("ALTER TABLE moments ADD COLUMN is_uploaded_tg INTEGER DEFAULT 0")
+
+    if "upload_tanggal" not in cols_moments:
+        print("[DB] Menambahkan kolom 'upload_tanggal' ke tabel moments...")
+        cursor.execute("ALTER TABLE moments ADD COLUMN upload_tanggal TEXT")
+
+    if "upload_tanggal_fb" not in cols_moments:
+        print("[DB] Menambahkan kolom 'upload_tanggal_fb' ke tabel moments...")
+        cursor.execute("ALTER TABLE moments ADD COLUMN upload_tanggal_fb TEXT")
+
+    # Fix NULL values di kolom is_uploaded (bug lama: kolom bisa NULL padahal seharusnya 0)
+    cursor.execute("UPDATE moments SET is_uploaded = 0 WHERE is_uploaded IS NULL")
+    cursor.execute("UPDATE moments SET is_uploaded_fb = 0 WHERE is_uploaded_fb IS NULL")
+    cursor.execute("UPDATE moments SET is_uploaded_tg = 0 WHERE is_uploaded_tg IS NULL")
 
     # Buat tabel schedules jika belum ada
     cursor.execute('''
@@ -159,10 +180,16 @@ def log_message(video_id: Optional[int], text: str):
             except Exception:
                 pass
 
-# ----------------- BACKGROUND SEQUENTIAL WORKER -----------------
+# ----------------- BACKGROUND MULTI-THREAD WORKER POOL -----------------
 task_queue = queue.Queue()
 active_processes = set()
 active_processes_lock = threading.Lock()
+queued_videos = set()
+queued_videos_lock = threading.Lock()
+MAX_WORKERS = 2  # default, bisa diubah via config
+worker_threads = []
+worker_running = threading.Event()
+worker_running.set()  # aktif sejak awal
 
 from contextlib import contextmanager
 
@@ -183,7 +210,7 @@ def db_cursor():
     finally:
         conn.close()
 
-VALID_COLUMNS = {"status_analisis", "status_download", "status_potong", "status_upload", "status_facebook", "error_message", "judul_video", "channel_video"}
+VALID_COLUMNS = {"status_analisis", "status_download", "status_potong", "status_upload", "status_facebook", "status_telegram", "error_message", "judul_video", "channel_video"}
 
 def update_video_status(video_id: int, **kwargs):
     """Mengupdate status kolom video di database secara cepat"""
@@ -255,17 +282,22 @@ def execute_subprocess_live(video_id: int, stage: str, cmd: List[str]) -> bool:
                 pass
         return False
 
-def background_worker():
-    """Background thread worker yang memproses tugas satu per satu"""
-    print("[Worker] Background Thread Worker aktif dan siap memproses antrean.")
-    while True:
+def worker_loop():
+    """Loop setiap worker thread — mengambil task dari queue dan memproses secara parallel"""
+    print(f"[Worker] Thread worker {threading.current_thread().name} siap.")
+    while worker_running.is_set():
         try:
             task = task_queue.get()
             if task is None:
+                task_queue.task_done()
                 break
                 
             video_id = task["video_id"]
             stage = task["stage"]
+            
+            # Hapus dari antrian karena sudah mulai diproses
+            with queued_videos_lock:
+                queued_videos.discard(video_id)
             
             try:
                 # Hubungkan ke DB untuk membaca URL video
@@ -283,12 +315,12 @@ def background_worker():
                 video_url = row["url"]
                 video_title = row["judul_video"]
                 
-                log_message(video_id, f"\n🚀 [Queue] Memproses Video: '{video_title}' (ID: {video_id})")
+                log_message(video_id, f"\n🚀 [Queue] Memproses Video: '{video_title}' (ID: {video_id}) — Worker: {threading.current_thread().name}")
                 
                 # --- JALANKAN PIPELINE TAHAP DEMI TAHAP ---
                 stages_to_run = []
                 if stage == "all":
-                    stages_to_run = ["analisa", "download", "potong", "upload"]
+                    stages_to_run = ["analisa", "download", "potong"]
                 else:
                     stages_to_run = [stage]
                     
@@ -299,6 +331,7 @@ def background_worker():
                     "potong":   "status_potong",
                     "upload":   "status_upload",
                     "facebook": "status_facebook",
+                    "telegram": "status_telegram",
                 }
 
                 success = True
@@ -319,6 +352,8 @@ def background_worker():
                         cmd = [sys.executable, "upload_youtube.py", str(video_id)]
                     elif current_stage == "facebook":
                         cmd = [sys.executable, "upload_facebook.py", str(video_id)]
+                    elif current_stage == "telegram":
+                        cmd = [sys.executable, "upload_telegram.py", str(video_id)]
                         
                     # Eksekusi — tandai video sebagai active agar cleanup thread tidak mereset statusnya
                     with active_processes_lock:
@@ -346,15 +381,15 @@ def background_worker():
                         break  # Stop pipeline jika ada yang gagal di tengah jalan
                         
                 if success and stage == "all":
-                    log_message(video_id, "🎉 [SUKSES TOTAL] Pipeline otomatis All-in-One selesai dengan sukses!")
+                    log_message(video_id, "🎉 [SUKSES] Pipeline prep selesai! Video siap diupload.")
                     
             except Exception as ex:
                 error_msg = f"Terjadi kesalahan fatal: {str(ex)}"
                 print(f"[Worker Error] Video ID {video_id}: {error_msg}")
                 log_message(video_id, f"❌ [ERROR FATAL] {error_msg}")
                 # Jika ada error crash, reset semua status 'processing' kembali ke 'failed'
-                STAGE_COL = {"analisa": "status_analisis", "download": "status_download", "potong": "status_potong", "upload": "status_upload", "facebook": "status_facebook"}
-                for s in ["analisa", "download", "potong", "upload", "facebook"]:
+                STAGE_COL = {"analisa": "status_analisis", "download": "status_download", "potong": "status_potong", "upload": "status_upload", "facebook": "status_facebook", "telegram": "status_telegram"}
+                for s in ["analisa", "download", "potong", "upload", "facebook", "telegram"]:
                     try:
                         update_video_status(video_id, **{STAGE_COL[s]: "failed", "error_message": error_msg})
                     except Exception:
@@ -365,9 +400,44 @@ def background_worker():
             print(f"[Worker Error] Terjadi kendala: {ex}")
             log_message(None, f"[Worker Error] Kendala fatal: {ex}")
 
-# Jalankan background thread saat startup
-worker_thread = threading.Thread(target=background_worker, daemon=True)
-worker_thread.start()
+    print(f"[Worker] Thread {threading.current_thread().name} berhenti.")
+
+
+def start_worker_pool(count=MAX_WORKERS):
+    """Memulai N worker thread untuk parallel processing"""
+    global worker_threads
+    # Hentikan worker lama jika ada
+    stop_worker_pool()
+    worker_running.set()
+    worker_threads = []
+    for i in range(count):
+        t = threading.Thread(target=worker_loop, daemon=True, name=f"Worker-{i+1}")
+        t.start()
+        worker_threads.append(t)
+    print(f"[Worker] {count} worker thread dimulai. Siap memproses {count} video secara parallel.")
+
+
+def stop_worker_pool():
+    """Menghentikan semua worker thread"""
+    worker_running.clear()
+    # Kirim sentinel untuk membangunkan worker yang sedang blocking di queue.get()
+    for _ in worker_threads:
+        task_queue.put(None)
+    for t in worker_threads:
+        if t.is_alive():
+            t.join(timeout=2)
+    worker_threads.clear()
+
+# Jalankan worker pool saat startup (mengambil max_workers dari config jika ada)
+def init_worker_pool():
+    try:
+        cfg = load_app_config()
+        w = cfg.get("auto_upload", {}).get("max_workers", MAX_WORKERS)
+        start_worker_pool(max(1, min(5, w)))
+    except Exception:
+        start_worker_pool(MAX_WORKERS)
+
+init_worker_pool()
 
 # ----------------- PYDANTIC SCHEMAS -----------------
 class VideoInput(BaseModel):
@@ -386,9 +456,18 @@ class ConfigUpdate(BaseModel):
     font_name: str
     font_size: str
     whisper_model: str
+    enable_facebook: bool = False
     fb_page_id: str = ""
     fb_page_token: str = ""
     fb_privacy: str = "PUBLIC"
+    enable_telegram: bool = False
+    tg_api_id: str = ""
+    tg_api_hash: str = ""
+    tg_phone: str = ""
+    tg_session_name: str = "nurclipper_tg"
+    auto_upload_enabled: bool = True
+    upload_limit_per_day: int = 30
+    max_workers: int = 2
 
 class ScheduleInput(BaseModel):
     video_id: int
@@ -417,12 +496,14 @@ def startup_event():
                 status_download  = CASE WHEN status_download  = 'processing' THEN 'failed' ELSE status_download  END,
                 status_potong    = CASE WHEN status_potong    = 'processing' THEN 'failed' ELSE status_potong    END,
                 status_upload    = CASE WHEN status_upload    = 'processing' THEN 'failed' ELSE status_upload    END,
-                status_facebook  = CASE WHEN status_facebook  = 'processing' THEN 'failed' ELSE status_facebook  END
+                status_facebook  = CASE WHEN status_facebook  = 'processing' THEN 'failed' ELSE status_facebook  END,
+                status_telegram  = CASE WHEN status_telegram  = 'processing' THEN 'failed' ELSE status_telegram  END
             WHERE status_analisis = 'processing'
                OR status_download  = 'processing'
                OR status_potong    = 'processing'
                OR status_upload    = 'processing'
                OR status_facebook  = 'processing'
+               OR status_telegram  = 'processing'
         """)
         affected = cursor.rowcount
         conn.commit()
@@ -436,6 +517,12 @@ def startup_event():
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
 
+    # Jalankan auto-upload scheduler
+    auto_scheduler_thread = threading.Thread(target=auto_upload_scheduler, daemon=True)
+    auto_scheduler_thread.start()
+    # Trigger check pertama kali saat startup
+    threading.Thread(target=auto_upload_check_once, daemon=True).start()
+
     # Periodic stale-status cleanup (setiap 5 menit) untuk jaga-jaga jika ada status 'processing' yang macet
     def stale_status_cleanup():
         while True:
@@ -445,7 +532,7 @@ def startup_event():
                 conn = sqlite3.connect(DB_FILE)
                 cursor = conn.cursor()
                 # Reset processing → failed HANYA untuk video yang TIDAK sedang diproses
-                for vid_col in ["status_analisis", "status_download", "status_potong", "status_upload", "status_facebook"]:
+                for vid_col in ["status_analisis", "status_download", "status_potong", "status_upload", "status_facebook", "status_telegram"]:
                     if active_vids:
                         placeholders = ",".join("?" * len(active_vids))
                         cursor.execute(f"""
@@ -515,6 +602,13 @@ def add_video(payload: VideoInput):
         video_id = cursor.lastrowid
         conn.commit()
         log_message(video_id, f"📝 Ditambahkan ke database: '{title}' ({url})")
+
+        # Auto-trigger pipeline prep (analisa → download → potong)
+        with queued_videos_lock:
+            queued_videos.add(video_id)
+        task_queue.put({"video_id": video_id, "stage": "all"})
+        log_message(video_id, "📥 [Antrian] Pipeline prep (Analisa → Download → Potong) masuk antrian. Menunggu giliran...")
+
         return {"success": True, "video_id": video_id, "judul_video": title, "channel_video": channel}
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="Link URL YouTube ini sudah ada di antrean database!")
@@ -572,6 +666,7 @@ def get_moments(video_id: int):
         m["has_clip"] = os.path.exists(path_clip)
         m["clip_url"] = f"/clips/{file_clip_name}" if m["has_clip"] else None
         m["is_uploaded_fb"] = m.get("is_uploaded_fb", 0)
+        m["is_uploaded_tg"] = m.get("is_uploaded_tg", 0)
         moments.append(m)
         
     return moments
@@ -595,30 +690,14 @@ def update_moment(moment_id: int, payload: MomentUpdate):
 @app.post("/api/process/{video_id}/{stage}")
 def trigger_stage(video_id: int, stage: str):
     """Memicu proses manual per tahap (analisa, download, potong, upload)"""
-    if stage not in ["analisa", "download", "potong", "upload", "facebook", "all"]:
+    if stage not in ["analisa", "download", "potong", "upload", "facebook", "telegram", "all"]:
         raise HTTPException(status_code=400, detail="Tahapan proses tidak dikenal.")
         
     # Tambahkan tugas ke antrean latar belakang
+    with queued_videos_lock:
+        queued_videos.add(video_id)
     task_queue.put({"video_id": video_id, "stage": stage})
     log_message(video_id, f"📥 Masuk Antrean Latar Belakang: Tahap '{stage.upper()}'")
-    
-    # Update status ke pending/waiting di DB agar UI langsung merespon visual
-    STAGE_COL = {
-        "analisa":  "status_analisis",
-        "download": "status_download",
-        "potong":   "status_potong",
-        "upload":   "status_upload",
-        "facebook": "status_facebook",
-    }
-    if stage != "all":
-        update_video_status(video_id, **{STAGE_COL[stage]: "processing"})
-    else:
-        update_video_status(video_id,
-            status_analisis="processing",
-            status_download="processing",
-            status_potong="processing",
-            status_upload="processing"
-        )
         
     return {"success": True, "message": f"Tugas {stage} berhasil didaftarkan ke antrean."}
 
@@ -627,6 +706,11 @@ ENV_FILE = "environment.txt"
 CONFIG_FILE = "config.json"
 
 DEFAULT_CONFIG = {
+    "auto_upload": {
+        "enabled": True,
+        "limit_per_day": 30,
+        "max_workers": 2
+    },
     "caption": {
         "enabled": True,
         "model": "small",
@@ -637,9 +721,17 @@ DEFAULT_CONFIG = {
         "margin_h": "0"
     },
     "facebook": {
+        "enabled": False,
         "page_id": "",
         "page_access_token": "",
         "privacy": "PUBLIC"
+    },
+    "telegram": {
+        "enabled": False,
+        "api_id": "",
+        "api_hash": "",
+        "phone": "",
+        "session_name": "nurclipper_tg"
     }
 }
 
@@ -667,6 +759,7 @@ def get_config():
     app_cfg = load_app_config()
     caption = app_cfg.get("caption", DEFAULT_CONFIG["caption"])
     facebook = app_cfg.get("facebook", DEFAULT_CONFIG["facebook"])
+    telegram = app_cfg.get("telegram", DEFAULT_CONFIG["telegram"])
     has_youtube_auth = os.path.exists("token.pickle")
 
     masked_key = ""
@@ -678,6 +771,11 @@ def get_config():
     if len(fb_token) > 10:
         masked_fb_token = fb_token[:6] + "****" + fb_token[-4:]
 
+    tg_api_hash = telegram.get("api_hash", "")
+    masked_tg_hash = ""
+    if len(tg_api_hash) > 10:
+        masked_tg_hash = tg_api_hash[:6] + "****" + tg_api_hash[-4:]
+
     return {
         "gemini_key": masked_key,
         "enable_caption": caption.get("enabled", True),
@@ -685,9 +783,18 @@ def get_config():
         "font_size": caption.get("font_size", "6"),
         "whisper_model": caption.get("model", "small"),
         "has_youtube_auth": has_youtube_auth,
+        "enable_facebook": facebook.get("enabled", False),
         "fb_page_id": facebook.get("page_id", ""),
         "fb_page_token": masked_fb_token,
-        "fb_privacy": facebook.get("privacy", "PUBLIC")
+        "fb_privacy": facebook.get("privacy", "PUBLIC"),
+        "enable_telegram": telegram.get("enabled", False),
+        "tg_api_id": telegram.get("api_id", ""),
+        "tg_api_hash": masked_tg_hash,
+        "tg_phone": telegram.get("phone", ""),
+        "tg_session_name": telegram.get("session_name", "nurclipper_tg"),
+        "auto_upload_enabled": app_cfg.get("auto_upload", DEFAULT_CONFIG["auto_upload"]).get("enabled", True),
+        "upload_limit_per_day": app_cfg.get("auto_upload", DEFAULT_CONFIG["auto_upload"]).get("limit_per_day", 30),
+        "max_workers": app_cfg.get("auto_upload", DEFAULT_CONFIG["auto_upload"]).get("max_workers", 2)
     }
 
 @app.post("/api/config")
@@ -724,12 +831,35 @@ def update_config(payload: ConfigUpdate):
         if "****" in new_token or not new_token:
             new_token = old_fb.get("page_access_token", "")
         app_cfg["facebook"] = {
+            "enabled": payload.enable_facebook,
             "page_id": payload.fb_page_id.strip(),
             "page_access_token": new_token,
             "privacy": payload.fb_privacy
         }
+        old_tg = app_cfg.get("telegram", {})
+        new_tg_hash = payload.tg_api_hash.strip()
+        if "****" in new_tg_hash or not new_tg_hash:
+            new_tg_hash = old_tg.get("api_hash", "")
+        app_cfg["telegram"] = {
+            "enabled": payload.enable_telegram,
+            "api_id": payload.tg_api_id.strip(),
+            "api_hash": new_tg_hash,
+            "phone": payload.tg_phone.strip(),
+            "session_name": payload.tg_session_name.strip() or "nurclipper_tg"
+        }
+        new_max_workers = max(1, min(5, payload.max_workers))
+        app_cfg["auto_upload"] = {
+            "enabled": payload.auto_upload_enabled,
+            "limit_per_day": payload.upload_limit_per_day,
+            "max_workers": new_max_workers
+        }
         with open(CONFIG_FILE, "w") as f:
             json.dump(app_cfg, f, indent=2)
+
+        # Jika jumlah worker berubah, restart pool dengan jumlah baru
+        if new_max_workers != len(worker_threads):
+            log_message(None, f"⚙️ Jumlah worker diubah: {len(worker_threads)} → {new_max_workers}. Merestart pool...")
+            start_worker_pool(new_max_workers)
         log_message(None, "Pengaturan diperbarui di config.json.")
     except Exception as e:
         log_message(None, f"[Warning] Gagal mengupdate config.json: {e}")
@@ -809,6 +939,8 @@ def reset_video_status(video_id: int):
             status_download="pending",
             status_potong="pending",
             status_upload="pending",
+            status_facebook="pending",
+            status_telegram="pending",
             error_message=None
         )
         log_message(video_id, f"🔄 Semua status tahap video di-reset ke 'pending'")
@@ -854,6 +986,110 @@ def run_scheduler():
         except Exception as ex:
             print(f"[Scheduler Error] {ex}")
         time.sleep(30)  # Cek setiap 30 detik
+
+
+# ----------------- AUTO-UPLOAD SCHEDULER -----------------
+
+def auto_upload_check_once():
+    """Cek dan enqueue video untuk auto-upload (dipanggil sekali)"""
+    try:
+        app_cfg = load_app_config()
+        auto_cfg = app_cfg.get("auto_upload", {"enabled": True, "limit_per_day": 30})
+        if not auto_cfg.get("enabled", True):
+            return
+
+        limit = auto_cfg.get("limit_per_day", 30)
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Hitung jumlah klip (moment) yang sudah diupload ke YouTube hari ini
+        cursor.execute("""
+            SELECT COUNT(*) FROM moments
+            WHERE is_uploaded = 1 AND is_selected = 1 AND upload_tanggal = ?
+        """, (today,))
+        yt_count = cursor.fetchone()[0]
+
+        # Hitung jumlah klip (moment) yang sudah diupload ke Facebook hari ini
+        cursor.execute("""
+            SELECT COUNT(*) FROM moments
+            WHERE is_uploaded_fb = 1 AND is_selected = 1 AND upload_tanggal_fb = ?
+        """, (today,))
+        fb_count = cursor.fetchone()[0]
+
+        # YouTube: cari video berikutnya yang perlu diupload
+        if yt_count < limit:
+            with queued_videos_lock:
+                skip_ids = queued_videos | active_processes
+            if skip_ids:
+                placeholders = ",".join("?" * len(skip_ids))
+                query_args = list(skip_ids)
+                skip_clause = f"AND v.id NOT IN ({placeholders})"
+            else:
+                skip_clause = ""
+                query_args = []
+            cursor.execute(f"""
+                SELECT v.id FROM videos v
+                WHERE v.status_potong = 'success'
+                AND v.id NOT IN (
+                    SELECT DISTINCT video_id FROM moments
+                    WHERE is_uploaded = 1 AND is_selected = 1
+                )
+                {skip_clause}
+                ORDER BY v.id ASC LIMIT 1
+            """, query_args)
+            row = cursor.fetchone()
+            if row:
+                vid = row[0]
+                with queued_videos_lock:
+                    queued_videos.add(vid)
+                log_message(vid, f"[Auto-Upload] Enqueue YouTube (sisa kuota: {limit - yt_count})")
+                task_queue.put({"video_id": vid, "stage": "upload"})
+
+        # Facebook: cari video berikutnya yang perlu diupload
+        if fb_count < limit:
+            with queued_videos_lock:
+                skip_ids = queued_videos | active_processes
+            if skip_ids:
+                placeholders = ",".join("?" * len(skip_ids))
+                query_args = list(skip_ids)
+                skip_clause = f"AND v.id NOT IN ({placeholders})"
+            else:
+                skip_clause = ""
+                query_args = []
+            cursor.execute(f"""
+                SELECT v.id FROM videos v
+                WHERE v.status_potong = 'success'
+                AND v.id NOT IN (
+                    SELECT DISTINCT video_id FROM moments
+                    WHERE is_uploaded_fb = 1 AND is_selected = 1
+                )
+                {skip_clause}
+                ORDER BY v.id ASC LIMIT 1
+            """, query_args)
+            row = cursor.fetchone()
+            if row:
+                vid = row[0]
+                with queued_videos_lock:
+                    queued_videos.add(vid)
+                log_message(vid, f"[Auto-Upload] Enqueue Facebook (sisa kuota: {limit - fb_count})")
+                task_queue.put({"video_id": vid, "stage": "facebook"})
+
+        conn.close()
+    except Exception as ex:
+        print(f"[Auto-Upload Error] {ex}")
+
+
+def auto_upload_scheduler():
+    """Thread yang berjalan terus menerus untuk auto-upload"""
+    print("[Auto-Upload] Scheduler aktif.")
+    while True:
+        try:
+            auto_upload_check_once()
+        except Exception as ex:
+            print(f"[Auto-Upload Error] {ex}")
+        time.sleep(300)  # Cek setiap 5 menit
 
 
 @app.get("/api/schedules")
@@ -902,7 +1138,159 @@ def delete_schedule(schedule_id: int):
     return {"success": True}
 
 
-# ----------------- REAL-TIME LOG STREAM -----------------
+@app.get("/api/auto-upload/status")
+def get_auto_upload_status():
+    """Mengambil status auto-upload: kuota terpakai dan sisa hari ini"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    app_cfg = load_app_config()
+    auto_cfg = app_cfg.get("auto_upload", DEFAULT_CONFIG["auto_upload"])
+    limit = auto_cfg.get("limit_per_day", 30)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM moments
+        WHERE is_uploaded = 1 AND is_selected = 1 AND upload_tanggal = ?
+    """, (today,))
+    yt_uploaded = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(*) FROM moments
+        WHERE is_uploaded_fb = 1 AND is_selected = 1 AND upload_tanggal_fb = ?
+    """, (today,))
+    fb_uploaded = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT COUNT(DISTINCT v.id) FROM videos v
+        JOIN moments m ON m.video_id = v.id
+        WHERE v.status_potong = 'success' AND m.is_selected = 1
+        AND v.id NOT IN (
+            SELECT DISTINCT video_id FROM moments WHERE is_uploaded = 1
+        )
+    """)
+    pending_queue = cursor.fetchone()[0]
+
+    conn.close()
+
+    return {
+        "enabled": auto_cfg.get("enabled", True),
+        "limit_per_day": limit,
+        "youtube_uploaded_today": yt_uploaded,
+        "youtube_remaining": max(0, limit - yt_uploaded),
+        "facebook_uploaded_today": fb_uploaded,
+        "facebook_remaining": max(0, limit - fb_uploaded),
+        "pending_queue": pending_queue
+    }
+@app.post("/api/auto-upload/trigger")
+def trigger_auto_upload():
+    """Memicu auto-upload langsung untuk semua video yang siap hari ini"""
+    try:
+        count = 0
+        app_cfg = load_app_config()
+        auto_cfg = app_cfg.get("auto_upload", {"enabled": True, "limit_per_day": 30})
+        if not auto_cfg.get("enabled", True):
+            return {"success": False, "message": "Auto-upload sedang nonaktif", "enqueued": 0}
+
+        limit = auto_cfg.get("limit_per_day", 30)
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Hitung YT upload count today
+        cursor.execute("""
+            SELECT COUNT(*) FROM moments
+            WHERE is_uploaded = 1 AND is_selected = 1 AND upload_tanggal = ?
+        """, (today,))
+        yt_count = cursor.fetchone()[0]
+
+        # Hitung FB upload count today
+        cursor.execute("""
+            SELECT COUNT(*) FROM moments
+            WHERE is_uploaded_fb = 1 AND is_selected = 1 AND upload_tanggal_fb = ?
+        """, (today,))
+        fb_count = cursor.fetchone()[0]
+
+        with queued_videos_lock:
+            skip_ids = queued_videos | active_processes
+
+        def skip_clause_fn(skip):
+            if skip:
+                placeholders = ",".join("?" * len(skip))
+                return f"AND v.id NOT IN ({placeholders})", list(skip)
+            return "", []
+
+        # YouTube
+        if yt_count < limit:
+            skips = skip_ids.copy()
+            skips.update(queued_videos)
+            sc, qa = skip_clause_fn(skips)
+            cursor.execute(f"""
+                SELECT v.id, v.judul_video FROM videos v
+                WHERE v.status_potong = 'success'
+                AND v.id NOT IN (
+                    SELECT DISTINCT video_id FROM moments
+                    WHERE is_uploaded = 1 AND is_selected = 1
+                )
+                {sc}
+                ORDER BY v.id ASC LIMIT 5
+            """, qa)
+            rows = cursor.fetchall()
+            for row in rows:
+                vid = row[0]
+                with queued_videos_lock:
+                    if vid in (queued_videos | active_processes):
+                        continue
+                    queued_videos.add(vid)
+                log_message(vid, f"[Auto-Upload Trigger] Enqueue YouTube (sisa: {limit - yt_count - count})")
+                task_queue.put({"video_id": vid, "stage": "upload"})
+                count += 1
+                yt_count += 1
+                if yt_count >= limit:
+                    break
+
+        # Facebook
+        if fb_count < limit:
+            skips = skip_ids.copy()
+            skips.update(queued_videos)
+            sc, qa = skip_clause_fn(skips)
+            cursor.execute(f"""
+                SELECT v.id, v.judul_video FROM videos v
+                WHERE v.status_potong = 'success'
+                AND v.id NOT IN (
+                    SELECT DISTINCT video_id FROM moments
+                    WHERE is_uploaded_fb = 1 AND is_selected = 1
+                )
+                {sc}
+                ORDER BY v.id ASC LIMIT 5
+            """, qa)
+            rows = cursor.fetchall()
+            for row in rows:
+                vid = row[0]
+                with queued_videos_lock:
+                    if vid in (queued_videos | active_processes):
+                        continue
+                    queued_videos.add(vid)
+                log_message(vid, f"[Auto-Upload Trigger] Enqueue Facebook (sisa: {limit - fb_count})")
+                task_queue.put({"video_id": vid, "stage": "facebook"})
+                count += 1
+                fb_count += 1
+                if fb_count >= limit:
+                    break
+
+        conn.close()
+
+        if count > 0:
+            log_message(None, f"[Auto-Upload Trigger] {count} video ditambahkan ke antrean upload")
+        else:
+            log_message(None, "[Auto-Upload Trigger] Tidak ada video yang perlu diupload")
+        return {"success": True, "message": f"{count} video diantrekan untuk upload", "enqueued": count}
+    except Exception as ex:
+        log_message(None, f"[Auto-Upload Trigger Error] {ex}")
+        return {"success": False, "message": str(ex), "enqueued": 0}
+
+
 @app.get("/api/logs/stream")
 async def stream_logs(request: Request):
     """Endpoint Server-Sent Events (SSE) untuk streaming log real-time ke browser"""

@@ -18,3 +18,5 @@ config.json
 .agents/
 .opencode/
 BRAINSTORMING.md
+backup_*/
+*.session
