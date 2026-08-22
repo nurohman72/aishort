@@ -1256,6 +1256,110 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btnYoutubeAuthSettings")?.addEventListener("click", triggerYoutubeAuth);
 
     // ==========================================
+    // YT-DLP UPDATE CHECKER
+    // ==========================================
+    let ytdlpPollTimer = null;
+
+    const ytdlpDialog        = document.getElementById("ytdlpDialog");
+    const ytdlpDialogContent = document.getElementById("ytdlpDialogContent");
+    const btnYtDlpSkip       = document.getElementById("btnYtDlpSkip");
+    const btnYtDlpUpdate     = document.getElementById("btnYtDlpUpdate");
+    const btnCheckYtdlp      = document.getElementById("btnCheckYtdlp");
+    const btnUpdateYtdlp     = document.getElementById("btnUpdateYtdlp");
+    const ytdlpVersionVal    = document.getElementById("ytdlpVersionVal");
+    const ytdlpHintText      = document.getElementById("ytdlpHintText");
+
+    function renderYtdlpStatus(s) {
+        if (ytdlpVersionVal) ytdlpVersionVal.textContent = s.installed || "—";
+
+        let hint = "Belum diperiksa";
+        if (s.updating)            hint = "Sedang mengupdate yt-dlp via pip...";
+        else if (s.checking)       hint = "Memeriksa versi terbaru...";
+        else if (s.last_error)     hint = `Gagal memeriksa versi: ${s.last_error}`;
+        else if (s.update_available) hint = `Versi baru tersedia: ${s.latest} (terpasang: ${s.installed})`;
+        else if (s.last_check)     hint = `yt-dlp sudah versi terbaru (${s.installed})`;
+        if (ytdlpHintText) ytdlpHintText.textContent = hint;
+
+        if (btnCheckYtdlp) {
+            btnCheckYtdlp.disabled = s.checking || s.updating;
+            btnCheckYtdlp.innerHTML = s.checking
+                ? '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Memeriksa...'
+                : '<i class="fa-solid fa-arrows-rotate"></i> Periksa Update';
+        }
+        if (btnUpdateYtdlp) {
+            btnUpdateYtdlp.classList.toggle("hidden", !s.update_available);
+            btnUpdateYtdlp.disabled = s.updating;
+            btnUpdateYtdlp.innerHTML = s.updating
+                ? '<i class="fa-solid fa-spinner fa-spin"></i> Mengupdate...'
+                : '<i class="fa-solid fa-cloud-arrow-down"></i> Update Sekarang';
+        }
+
+        // Notifikasi modal saat aplikasi pertama kali dibuka
+        if (s.update_available && !s.checking && !s.updating && ytdlpDialog) {
+            const dismissed = sessionStorage.getItem("ytdlp_dismissed");
+            if (dismissed !== s.latest && ytdlpDialog.classList.contains("hidden")) {
+                ytdlpDialogContent.textContent =
+                    `Versi terpasang: ${s.installed} · Versi terbaru: ${s.latest}. Update direkomendasikan agar proses download tetap stabil.`;
+                ytdlpDialog.classList.remove("hidden");
+            }
+        }
+    }
+
+    async function fetchYtdlpStatus(force = false) {
+        try {
+            const res = await fetch(`/api/ytdlp/status${force ? "?force=true" : ""}`);
+            if (!res.ok) throw new Error();
+            const s = await res.json();
+            renderYtdlpStatus(s);
+            return s;
+        } catch { console.error("fetchYtdlpStatus error"); return null; }
+    }
+
+    function pollYtdlpUpdate() {
+        if (ytdlpPollTimer) clearInterval(ytdlpPollTimer);
+        ytdlpPollTimer = setInterval(async () => {
+            const s = await fetchYtdlpStatus();
+            if (!s || (!s.updating && !s.checking)) {
+                clearInterval(ytdlpPollTimer);
+                ytdlpPollTimer = null;
+                if (s && !s.last_error && !s.update_available) {
+                    toast("success", "Update yt-dlp selesai", `Versi aktif: ${s.installed}`);
+                } else if (s && s.update_available) {
+                    toast("warning", "Update yt-dlp", "Proses update belum berhasil, silakan coba lagi");
+                }
+            }
+        }, 2500);
+    }
+
+    async function mulaiUpdateYtdlp() {
+        try {
+            const res = await fetch("/api/ytdlp/update", { method: "POST" });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "");
+            toast("info", "Update dimulai", "Pantau progres di konsol log bawah");
+            pollYtdlpUpdate();
+        } catch (e) {
+            toast("error", "Gagal memulai update yt-dlp", e.message || "");
+        }
+        fetchYtdlpStatus();
+    }
+
+    btnYtDlpSkip?.addEventListener("click", () => {
+        ytdlpDialog.classList.add("hidden");
+        fetchYtdlpStatus().then(s => {
+            if (s?.latest) sessionStorage.setItem("ytdlp_dismissed", s.latest);
+        });
+    });
+
+    btnYtDlpUpdate?.addEventListener("click", () => {
+        ytdlpDialog.classList.add("hidden");
+        mulaiUpdateYtdlp();
+    });
+
+    btnCheckYtdlp?.addEventListener("click", () => fetchYtdlpStatus(true));
+    btnUpdateYtdlp?.addEventListener("click", mulaiUpdateYtdlp);
+
+    // ==========================================
     // THEME SWITCHER
     // ==========================================
     // Load tema dari localStorage saat init
@@ -1294,6 +1398,7 @@ document.addEventListener("DOMContentLoaded", () => {
         fetchConfig();
         fetchVideos(true);
         fetchSchedules();
+        fetchYtdlpStatus();
         setupSSE();
     }
 

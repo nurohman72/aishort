@@ -8,6 +8,7 @@
 
 | Versi | Tanggal | Perubahan Utama |
 |-------|---------|-----------------|
+| **2.4.0** | August 2026 | Auto-check & update yt-dlp (notifikasi startup + tombol di Pengaturan), fix download HTTP 403, fix exit code tahap download |
 | **2.3.0** | July 2026 | Facebook Reels upload (Resumable Upload API), cleanup unused files |
 | **2.2.0** | June 2026 | Pipeline auto-recovery, error handling overhaul, reset API, periodic stale cleanup, safety improvements |
 | **2.1.0** | June 2026 | Durasi max 59 detik, auto-refresh token, encoding fix, database schema update, start.bat, start_debug.bat |
@@ -356,6 +357,12 @@ pip install -r requirements.txt
 - Update `GEMINI_API_KEY` di `environment.txt`
 - Pastikan API key aktif di [Google AI Studio](https://makersuite.google.com/)
 
+#### 5. "HTTP Error 403: Forbidden" saat download
+- **Penyebab paling umum**: versi yt-dlp sudah lama, URL streaming ditolak CDN YouTube
+- Buka **Pengaturan** → kartu Informasi Sistem → klik **Periksa Update** → **Update Sekarang**
+- Atau manual: `venv\Scripts\python.exe -m pip install -U yt-dlp`
+- Jika masih 403 setelah update: refresh `cookies.txt` (cookies expired juga bisa memicu 403)
+
 ### Logs & Debugging
 - **Real-time logs** di bagian bawah aplikasi
 - **Filter logs** (semua, sukses, error, info)
@@ -396,6 +403,54 @@ pip install -r requirements.txt
 - **Database encryption** (opsional)
 
 # 📝 Perubahan & Update Terbaru
+
+## Version 2.4.0 (August 2026)
+
+### 🎯 Fitur Baru
+
+#### Auto-Check & Update yt-dlp
+- **Fitur**: Setiap kali aplikasi pertama kali berjalan, server otomatis mengecek versi yt-dlp terbaru dari PyPI
+- Jika tersedia versi baru, muncul **modal notifikasi** dengan dua pilihan:
+  - **Lanjutkan** — tutup notifikasi dan lanjut pakai aplikasi (tidak muncul lagi selama sesi browser)
+  - **Update Sekarang** — update yt-dlp langsung dari aplikasi via pip di background
+- **Tombol di Pengaturan**: kartu "Informasi Sistem" kini menampilkan versi yt-dlp aktif, status cek, tombol **Periksa Update**, dan tombol **Update Sekarang** (muncul hanya jika ada versi baru)
+- Progres dan hasil update dilaporkan ke **konsol log real-time**
+- Versi baru langsung dipakai proses download berikutnya **tanpa restart server** (karena tiap tahap download jalan sebagai subprocess terpisah)
+
+#### Endpoint Baru
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/ytdlp/status` | GET | Status versi yt-dlp terpasang vs terbaru di PyPI (`?force=true` untuk cek ulang) |
+| `/api/ytdlp/update` | POST | Picu update yt-dlp via pip di background thread |
+
+### 🔧 Perbaikan Bug
+
+#### Bug #1: Download gagal dengan HTTP Error 403: Forbidden
+- **Gejala**: `ERROR: unable to download video data: HTTP Error 403: Forbidden` saat tahap download
+- **Penyebab**: yt-dlp versi lama (2026.3.17, tertinggal ~5 bulan). URL streaming yang dihasilkan ditolak CDN googlevideo YouTube di tengah transfer
+- **Solusi**: Update yt-dlp ke `2026.8.19` + pin `requirements.txt` disesuaikan + fitur auto-check agar kejadian serupa cepat terdeteksi
+
+#### Bug #2: Tahap download tercatat "success" padahal gagal
+- **Gejala**: Log menampilkan `[Gagal]` tapi exit code 0 → `status_download = success` → pipeline lanjut ke tahap potong tanpa file video utuh
+- **Penyebab**: Exception handler di `download_youtube.py` menelan semua error tanpa exit code non-zero
+- **Solusi**: Tambah `sys.exit(1)` pada blok except; worker kini benar menandai `failed`, pipeline "all" berhenti di titik yang tepat, dan auto-recovery/reset bekerja sesuai desain
+
+### 📄 File yang Dimodifikasi
+
+| File | Perubahan |
+|------|-----------|
+| `web_server.py` | Seksi YT-DLP VERSION CHECKER, endpoint status/update, auto-check di startup event |
+| `download_youtube.py` | Fix exit code (`sys.exit(1)`) saat download gagal |
+| `requirements.txt` | Pin `yt-dlp==2026.8.19` |
+| `web_static/index.html` | Modal notifikasi update, seksi yt-dlp di Pengaturan, bump asset v4/v5 |
+| `web_static/app.js` | Logika fetchYtdlpStatus/render/polling, handler modal & tombol update |
+| `web_static/style.css` | Style `.ci-update`, `.ytdlp-update-box`, `.ytdlp-update-actions` |
+
+### ⚠️ Catatan Penting
+
+1. **Restart server** diperlukan setelah update kode ini agar endpoint baru aktif.
+2. **Hard refresh browser** (`Ctrl+F5`) untuk memuat asset terbaru (cache-buster sudah dinaikkan).
+3. Jika error 403 muncul lagi beberapa bulan ke depan, buka **Pengaturan** → klik **Periksa Update** → **Update Sekarang**.
 
 ## Version 2.2.0 (June 2026)
 
@@ -587,6 +642,10 @@ CMD ["python", "web_server.py"]
 #### YouTube Integration
 - `POST /api/youtube-auth` - Initiate OAuth flow
 - `GET /api/youtube-status` - Check auth status
+
+#### yt-dlp Maintenance (v2.4.0)
+- `GET /api/ytdlp/status` - Status versi yt-dlp terpasang vs terbaru di PyPI (`?force=true` untuk cek ulang)
+- `POST /api/ytdlp/update` - Update yt-dlp via pip di background thread
 
 ## 🤝 Contributing
 

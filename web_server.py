@@ -523,6 +523,9 @@ def startup_event():
     # Trigger check pertama kali saat startup
     threading.Thread(target=auto_upload_check_once, daemon=True).start()
 
+    # Cek versi yt-dlp terbaru saat aplikasi pertama kali berjalan
+    threading.Thread(target=cek_update_ytdlp, daemon=True).start()
+
     # Periodic stale-status cleanup (setiap 5 menit) untuk jaga-jaga jika ada status 'processing' yang macet
     def stale_status_cleanup():
         while True:
@@ -947,6 +950,119 @@ def reset_video_status(video_id: int):
         return {"success": True, "message": f"Status video '{row['judul_video']}' berhasil di-reset."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ----------------- YT-DLP VERSION CHECKER -----------------
+ytdlp_status = {
+    "installed": None,
+    "latest": None,
+    "update_available": False,
+    "checking": False,
+    "updating": False,
+    "last_check": None,
+    "last_error": None
+}
+ytdlp_lock = threading.Lock()
+
+def get_ytdlp_version_terpasang():
+    try:
+        from importlib.metadata import version as pkg_version
+        return pkg_version("yt-dlp")
+    except Exception:
+        return None
+
+def versi_lebih_baru(v_baru, v_lama):
+    def parse(v):
+        try:
+            return tuple(int(p) for p in str(v).split("."))
+        except Exception:
+            return None
+    a, b = parse(v_baru), parse(v_lama)
+    if a and b:
+        return a > b
+    return str(v_baru) != str(v_lama)
+
+def cek_update_ytdlp():
+    """Cek versi yt-dlp terbaru dari PyPI dan bandingkan dengan versi terpasang"""
+    with ytdlp_lock:
+        if ytdlp_status["checking"] or ytdlp_status["updating"]:
+            return dict(ytdlp_status)
+        ytdlp_status["checking"] = True
+    try:
+        res = requests.get("https://pypi.org/pypi/yt-dlp/json", timeout=10)
+        res.raise_for_status()
+        latest = res.json()["info"]["version"]
+        installed = get_ytdlp_version_terpasang()
+        with ytdlp_lock:
+            ytdlp_status["installed"] = installed
+            ytdlp_status["latest"] = latest
+            ytdlp_status["update_available"] = bool(installed and versi_lebih_baru(latest, installed))
+            ytdlp_status["last_check"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ytdlp_status["last_error"] = None
+            tersedia = ytdlp_status["update_available"]
+        if tersedia:
+            log_message(None, f"⬆️ [Update] yt-dlp versi baru tersedia: {installed} → {latest}")
+    except Exception as e:
+        with ytdlp_lock:
+            ytdlp_status["last_error"] = str(e)
+            ytdlp_status["last_check"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[YtDlpCheck] Gagal cek versi: {e}")
+    finally:
+        with ytdlp_lock:
+            ytdlp_status["checking"] = False
+    return dict(ytdlp_status)
+
+def proses_update_ytdlp():
+    """Jalankan pip install --upgrade yt-dlp dan laporkan hasilnya ke log sistem"""
+    with ytdlp_lock:
+        if ytdlp_status["updating"]:
+            return
+        ytdlp_status["updating"] = True
+    versi_lama = ytdlp_status.get("installed") or get_ytdlp_version_terpasang()
+    log_message(None, f"⬆️ [Update] Memperbarui yt-dlp via pip...")
+    sukses = False
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300
+        )
+        versi_baru = get_ytdlp_version_terpasang()
+        output_tail = "\n".join((proc.stdout or "").strip().splitlines()[-3:])
+        if proc.returncode == 0 and versi_baru and versi_baru != versi_lama:
+            log_message(None, f"✅ [Update] yt-dlp berhasil diperbarui: {versi_lama} → {versi_baru}")
+            log_message(None, "[Info] Versi baru langsung dipakai pada proses download berikutnya tanpa restart server.")
+            sukses = True
+        elif proc.returncode == 0:
+            log_message(None, f"[Info] yt-dlp sudah berada di versi terbaru ({versi_baru}).")
+            sukses = True
+        else:
+            log_message(None, f"❌ [Update] Gagal memperbarui yt-dlp (exit code {proc.returncode}): {output_tail}")
+    except Exception as e:
+        log_message(None, f"❌ [Update] Error saat memperbarui yt-dlp: {e}")
+    finally:
+        with ytdlp_lock:
+            ytdlp_status["updating"] = False
+    if sukses:
+        cek_update_ytdlp()
+
+@app.get("/api/ytdlp/status")
+def get_ytdlp_status(force: bool = False):
+    """Ambil status versi yt-dlp terpasang vs terbaru di PyPI"""
+    if force:
+        return cek_update_ytdlp()
+    if not ytdlp_status["last_check"] and not ytdlp_status["checking"]:
+        threading.Thread(target=cek_update_ytdlp, daemon=True).start()
+    with ytdlp_lock:
+        return dict(ytdlp_status)
+
+@app.post("/api/ytdlp/update")
+def trigger_update_ytdlp():
+    """Memicu update yt-dlp via pip di background thread"""
+    with ytdlp_lock:
+        if ytdlp_status["updating"]:
+            raise HTTPException(status_code=409, detail="Proses update sedang berjalan.")
+    threading.Thread(target=proses_update_ytdlp, daemon=True).start()
+    log_message(None, "⬆️ [Update] Proses update yt-dlp dimulai di latar belakang.")
+    return {"success": True, "message": "Update yt-dlp dimulai. Pantau progres di konsol log."}
 
 # ----------------- SCHEDULED UPLOAD MANAGER -----------------
 

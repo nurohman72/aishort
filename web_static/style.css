@@ -1713,3 +1713,19 @@ body, .sidebar, .topbar, .card, .stat-card, .log-panel,
     font-size: 12px;
     padding: 8px 12px;
 }
+
+/* ===== YT-DLP UPDATE ===== */
+.confirm-icon.ci-update { color: var(--info); }
+
+.ytdlp-update-box {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.ytdlp-update-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}

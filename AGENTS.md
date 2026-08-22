@@ -66,22 +66,31 @@ NurClipper is a web-based automation platform that transforms long YouTube video
 
 | File | Purpose |
 |---|---|---|
-| `web_server.py` | Main entry point (936 lines) |
+| `web_server.py` | Main entry point (~1460 lines) |
 | `config.json` | App config (caption + Facebook settings) |
 | `analisa_youtube.py` | AI analysis with Gemini |
-| `download_youtube.py` | yt-dlp downloader |
+| `download_youtube.py` | yt-dlp downloader (exit code non-zero saat gagal) |
 | `potong_video.py` | FFmpeg cutting + captioning |
 | `upload_youtube.py` | YouTube Data API uploader (301 lines) |
 | `upload_facebook.py` | Facebook Reels uploader (Resumable Upload API v21.0, 255 lines) |
 | `autocaption.py` | Whisper subtitle pipeline |
-| `web_static/app.js` | Frontend SPA logic (1114 lines) |
-| `web_static/style.css` | Design system (1611 lines) |
-| `web_static/index.html` | Main HTML page (607 lines) |
+| `web_static/app.js` | Frontend SPA logic (~1400 lines) |
+| `web_static/style.css` | Design system (~1730 lines) |
+| `web_static/index.html` | Main HTML page (~750 lines) |
 
-## Key Endpoints (v2.2.0 additions)
+## Key Endpoints
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/reset/{video_id}` | POST | Reset semua status tahap ke `pending` |
+| `/api/ytdlp/status` | GET | Status versi yt-dlp vs PyPI (`?force=true` untuk cek ulang) |
+| `/api/ytdlp/update` | POST | Update yt-dlp via pip di background thread |
+
+## yt-dlp Version Checker (v2.4.0)
+- Server auto-check versi yt-dlp terbaru di PyPI saat startup (`cek_update_ytdlp()`)
+- Frontend menampilkan modal notifikasi (Lanjutkan / Update Sekarang) jika ada versi baru
+- Tombol Periksa Update + Update Sekarang di Pengaturan (kartu Informasi Sistem)
+- Update via pip jalan di background thread; hasil dilaporkan ke log real-time
+- Versi baru langsung dipakai subprocess download berikutnya tanpa restart server
 
 ## Pipeline Recovery
 - If "all" stage pipeline fails mid-way, remaining stages are auto-reset to `pending`

@@ -76,6 +76,7 @@ def unduh_video_youtube(url_video, folder_tujuan="downloads"):
 
     except Exception as e:
         print(f"\n[Gagal] Terjadi kesalahan saat mengunduh video: {e}", flush=True)
+        sys.exit(1)
 
 # --- Bagian Utama Program ---
 if __name__ == "__main__":
