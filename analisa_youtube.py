@@ -13,6 +13,7 @@ if sys.platform == "win32":
 import re
 import json
 import sqlite3
+import time
 import requests
 from google import genai
 from google.genai import types
@@ -220,8 +221,8 @@ def simpan_ke_sqlite(video_url, json_data_string):
             waktu_selesai = moment.get("waktu_selesai") or hitung_waktu_selesai(waktu_start, durasi_detik=59)
             
             cursor.execute('''
-                INSERT INTO moments (video_id, waktu_start, waktu_selesai, judul_menarik, hashtag_terbaik, deskripsi_pendek, is_selected)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
+                INSERT INTO moments (video_id, waktu_start, waktu_selesai, judul_menarik, hashtag_terbaik, deskripsi_pendek, is_selected, is_uploaded)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 0)
             ''', (
                 video_id,
                 waktu_start,
@@ -414,17 +415,33 @@ HANYA kumpulkan momen yang lolos semua cek di atas.
 
 print(f"\nMengirimkan data asli ke Gemini AI... Mohon tunggu...")
 
+ERROR_SEMENTARA = ('503', '500', '429', 'unavailable', 'overloaded', 'internal', 'deadline', 'resource exhausted')
+
+def panggil_gemini_dengan_retry(client, prompt_text, maks_coba=5):
+    tunda = 5
+    for percobaan in range(1, maks_coba + 1):
+        try:
+            return client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt_text,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=HasilAnalisisVideo,
+                    temperature=0.75,  # Lebih kreatif untuk judul viral
+                    thinking_config=types.ThinkingConfig(thinking_budget=8000),  # Beri ruang berpikir lebih dalam
+                ),
+            )
+        except Exception as e:
+            teks = str(e).lower()
+            if any(k in teks for k in ERROR_SEMENTARA) and percobaan < maks_coba:
+                print(f"[Retry] Gemini sibuk/overload (percobaan {percobaan}/{maks_coba}). Tunggu {tunda} detik ...", flush=True)
+                time.sleep(tunda)
+                tunda *= 2
+                continue
+            raise
+
 try:
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt_text,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=HasilAnalisisVideo,
-            temperature=0.75,  # Lebih kreatif untuk judul viral
-            thinking_config=types.ThinkingConfig(thinking_budget=8000),  # Beri ruang berpikir lebih dalam
-        ),
-    )
+    response = panggil_gemini_dengan_retry(client, prompt_text)
 
     print("Hasil Analisis kontekstual dari Gemini berhasil didapatkan.")
 
