@@ -1,6 +1,6 @@
 .idea/
 .vscode/
-clips_out/
+clips_output/
 venv/
 videos_podcast/
 __pycache__/
