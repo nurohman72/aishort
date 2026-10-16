@@ -128,19 +128,28 @@ def ambil_transkrip_youtube(video_url):
     if video_id:
         print(f"[Info] Mencoba mengambil transkrip asli untuk ID Video: {video_id}...")
         try:
-            # Mencoba menarik transkrip dalam Bahasa Indonesia ('id') atau fallback Bahasa Inggris ('en')
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['id', 'en'])
-            
-            # Format transkrip menjadi teks terstruktur dengan timestamp
+            ytt_api = YouTubeTranscriptApi()
+            fetched = ytt_api.fetch(video_id, languages=['id', 'en'])
+            transcript_list = list(fetched)
+
+            def _txt(e):
+                return getattr(e, 'text', e.get('text') if isinstance(e, dict) else str(e))
+
+            def _start(e):
+                v = getattr(e, 'start', None)
+                if v is None and isinstance(e, dict):
+                    v = e.get('start', 0)
+                return float(v or 0)
+
             lines = []
             for entry in transcript_list:
-                start_seconds = int(entry['start'])
+                start_seconds = int(_start(entry))
                 h = start_seconds // 3600
                 m = (start_seconds % 3600) // 60
                 s = start_seconds % 60
                 time_str = f"{h:02d}:{m:02d}:{s:02d}"
-                lines.append(f"[{time_str}] {entry['text']}")
-            
+                lines.append(f"[{time_str}] {_txt(entry)}")
+
             transcript_str = "\n".join(lines)
             print(f"[Sukses] Transkrip asli berhasil ditarik! Total baris: {len(lines)}")
         except Exception as e:
@@ -282,8 +291,13 @@ def validasi_dan_snap_timestamp(daftar_moment, transcript_list):
     if not transcript_list:
         return daftar_moment
 
-    # Buat sorted list timestamp transkrip dalam detik
-    transcript_detik = sorted(set(int(e['start']) for e in transcript_list))
+    def _get_start(e):
+        v = getattr(e, 'start', None)
+        if v is None and isinstance(e, dict):
+            v = e.get('start', 0)
+        return float(v or 0)
+
+    transcript_detik = sorted(set(int(_get_start(e)) for e in transcript_list))
 
     def snap_ke_bawah(target_detik):
         """Cari timestamp transkrip <= target_detik"""

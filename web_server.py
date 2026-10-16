@@ -159,6 +159,7 @@ def fetch_youtube_metadata(url):
 log_listeners = set()
 log_history = []
 log_lock = threading.Lock()
+main_event_loop = None
 
 def log_message(video_id: Optional[int], text: str):
     """Menambahkan pesan log ke memori dan membroadcast ke semua klien web aktif"""
@@ -171,10 +172,16 @@ def log_message(video_id: Optional[int], text: str):
         log_history.append(msg)
         if len(log_history) > 1000:
             log_history.pop(0)
-            
-    # Broadcast log — iterate inside lock, put_nowait non-blocking
-    with log_lock:
-        for q in log_listeners:
+        listeners = list(log_listeners)
+
+    if main_event_loop and main_event_loop.is_running():
+        for q in listeners:
+            try:
+                main_event_loop.call_soon_threadsafe(q.put_nowait, msg)
+            except Exception:
+                pass
+    else:
+        for q in listeners:
             try:
                 q.put_nowait(msg)
             except Exception:
@@ -225,7 +232,7 @@ def update_video_status(video_id: int, **kwargs):
         values.append(video_id)
         cursor.execute(f"UPDATE videos SET {set_clause} WHERE id = ?", values)
 
-TIMEOUT_PER_PROCESS = 600  # 10 menit maks per subprocess
+TIMEOUT_PER_PROCESS = 1800  # 30 menit maks per subprocess (Whisper large bisa lama)
 
 def execute_subprocess_live(video_id: int, stage: str, cmd: List[str]) -> bool:
     """Mengeksekusi perintah subprocess Python dan menangkap output log per baris secara real-time"""
@@ -437,7 +444,7 @@ def init_worker_pool():
     except Exception:
         start_worker_pool(MAX_WORKERS)
 
-init_worker_pool()
+# Worker pool dimulai di startup_event (hindari duplikat saat reload=True)
 
 # ----------------- PYDANTIC SCHEMAS -----------------
 class VideoInput(BaseModel):
@@ -479,11 +486,16 @@ class ScheduleInput(BaseModel):
 
 @app.on_event("startup")
 def startup_event():
+    global main_event_loop
+    try:
+        main_event_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        main_event_loop = None
     migrate_db()
-    # Pastikan folder esensial ada
     for folder in ["videos_podcast", "clips_output"]:
         if not os.path.exists(folder):
             os.makedirs(folder)
+    init_worker_pool()
 
     # Reset status 'processing' yang tertinggal akibat crash/restart server
     # Ubah ke 'failed' agar user bisa trigger ulang tanpa tombol ter-disable
@@ -738,14 +750,26 @@ DEFAULT_CONFIG = {
     }
 }
 
+def _deep_merge_dict(base: dict, override: dict) -> dict:
+    for k, v in override.items():
+        if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+            _deep_merge_dict(base[k], v)
+        else:
+            base[k] = v
+    return base
+
 def load_app_config():
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                _deep_merge_dict(cfg, loaded)
+                return cfg
         except Exception as e:
             print(f"[Config] Gagal baca config.json: {e}")
-    return json.loads(json.dumps(DEFAULT_CONFIG))
+    return cfg
 
 @app.get("/api/config")
 def get_config():
@@ -1412,19 +1436,18 @@ async def stream_logs(request: Request):
     """Endpoint Server-Sent Events (SSE) untuk streaming log real-time ke browser"""
     async def event_generator():
         q = asyncio.Queue()
-        log_listeners.add(q)
+        with log_lock:
+            log_listeners.add(q)
         try:
-            # Kirim log history awal agar konsol web terisi riwayat
             with log_lock:
-                for msg in log_history:
-                    yield f"data: {json.dumps(msg)}\n\n"
-                    
+                hist = list(log_history)
+            for msg in hist:
+                yield f"data: {json.dumps(msg)}\n\n"
+
             while True:
-                # Periksa apakah klien memutuskan koneksi
                 if await request.is_disconnected():
                     break
                 try:
-                    # Ambil log baru yang masuk
                     msg = await asyncio.wait_for(q.get(), timeout=1.0)
                     yield f"data: {json.dumps(msg)}\n\n"
                 except asyncio.TimeoutError:
@@ -1432,31 +1455,29 @@ async def stream_logs(request: Request):
         except asyncio.CancelledError:
             pass
         finally:
-            log_listeners.remove(q)
-            
+            with log_lock:
+                log_listeners.discard(q)
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 # ----------------- SERVING STATIC FILES & FRONTEND -----------------
 
-# Sajikan file video hasil pemotongan agar video player di browser dapat membacanya langsung
+os.makedirs("clips_output", exist_ok=True)
+os.makedirs("videos_podcast", exist_ok=True)
 app.mount("/clips", StaticFiles(directory="clips_output"), name="clips")
 
-# Sajikan folder statis frontend web_static
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web_static")
-if not os.path.exists(STATIC_DIR):
-    os.makedirs(STATIC_DIR)
-
+os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/", StaticFiles(directory="web_static", html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    # Migrasi database saat startup script dijalankan secara langsung
     migrate_db()
-    
+
     print("\n" + "="*60)
     print("[SERVER] SERVER NUROHMAN CLIPPER AKTIF!")
     print("Silakan buka browser Anda dan akses:")
     print("-> http://localhost:8000")
     print("="*60 + "\n")
-    
+
     uvicorn.run("web_server:app", host="127.0.0.1", port=8000, reload=True)
